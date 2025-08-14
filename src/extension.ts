@@ -5,11 +5,13 @@ import { createUIService, showConfigurationDialog, showQuickActionsMenu, createO
 import { createAgent } from './agent';
 import { createPluginManager, initializeMockPlugins } from './pluginManager';
 import { createConfigManager, isConfigurationComplete, initializeDefaultConfig } from './configManager';
+import { AviorWebviewProvider } from './webviewProvider';
 import { AgentRequest } from './types';
 
 let outputChannel: vscode.OutputChannel;
 let agentInstance: any = null;
 let pluginManager: any = null;
+let webviewProvider: AviorWebviewProvider;
 
 export async function activate(context: vscode.ExtensionContext) {
 	// Initialize output channel
@@ -23,6 +25,15 @@ export async function activate(context: vscode.ExtensionContext) {
 	pluginManager = createPluginManager();
 	initializeMockPlugins();
 	logToChannel(outputChannel, 'Plugin system initialized');
+
+	// Create and register webview provider
+	webviewProvider = new AviorWebviewProvider(context);
+	context.subscriptions.push(
+		vscode.window.registerWebviewViewProvider(
+			AviorWebviewProvider.viewType,
+			webviewProvider
+		)
+	);
 
 	// Create services
 	const fileService = createFileService();
@@ -64,8 +75,10 @@ export async function activate(context: vscode.ExtensionContext) {
 	// Auto-start agent mode (as per requirements)
 	await startAgent(configManager, fileService, uiService, context);
 
+	// Automatically show the webview sidebar
+	await vscode.commands.executeCommand('workbench.view.extension.avior-sidebar');
+
 	logToChannel(outputChannel, 'Avior AI Agent extension activated successfully!');
-	await uiService.showMessage('Avior AI Agent is ready! Press Cmd+Shift+A to start.', 'info');
 }
 
 // Start the agent
@@ -84,22 +97,19 @@ async function startAgent(
 		// Get configuration
 		let config = await configManager.getConfig();
 
-		// If configuration is incomplete, prompt user
+		// If configuration is incomplete, set defaults instead of showing dialog
 		if (!isConfigurationComplete(config)) {
-			const configResult = await showConfigurationDialog();
-			if (!configResult) {
-				await uiService.showMessage('Agent startup cancelled - configuration required', 'warning');
-				return;
-			}
-
-			// Update configuration
+			// Set default configuration instead of prompting user
 			await configManager.updateConfig({
-				llmProvider: configResult.provider,
-				apiKey: configResult.apiKey,
-				model: configResult.model
+				llmProvider: 'openai',
+				apiKey: '', // User can configure later via UI
+				model: 'gpt-4',
+				temperature: 0.7,
+				maxTokens: 2000
 			});
 
 			config = await configManager.getConfig();
+			logToChannel(outputChannel, 'Using default configuration - user can update via UI');
 		}
 
 		// Create LLM service
@@ -111,6 +121,9 @@ async function startAgent(
 
 		// Create agent
 		agentInstance = createAgent(llmServiceResult.data, fileService, uiService);
+
+		// Pass agent instance to webview provider
+		webviewProvider.setAgentInstance(agentInstance);
 
 		// Start the agent
 		const result = await agentInstance.start();

@@ -2,9 +2,41 @@ import { ChatOpenAI } from '@langchain/openai';
 import { ChatAnthropic } from '@langchain/anthropic';
 import { AgentConfig, LLMService, AgentAction, Result } from './types';
 
+// Create mock LLM service when no API key is provided
+const createMockLLMService = (): LLMService => {
+  const mockResponse = async (prompt: string): Promise<string> => {
+    return `Mock AI Response: I received your request "${prompt}". Please configure your API key in the settings to enable real AI responses.`;
+  };
+
+  return {
+    generateResponse: async (prompt: string, context: ReadonlyArray<string>) => {
+      return mockResponse(prompt);
+    },
+    analyzeCode: async (code: string, question: string) => {
+      return `Mock Code Analysis: Please configure your API key to analyze the code. Question: ${question}`;
+    },
+    suggestEdits: async (code: string, intent: string) => {
+      return { 
+        type: 'edit', 
+        content: 'Please configure API key to get real suggestions', 
+        target: 'configuration', 
+        reasoning: 'Mock response due to missing API key' 
+      };
+    }
+  };
+};
+
 // Factory function to create LLM service based on configuration
 export const createLLMService = (config: AgentConfig): Result<LLMService> => {
   try {
+    // Check if API key is provided
+    if (!config.apiKey || config.apiKey.trim() === '') {
+      return {
+        success: true,
+        data: createMockLLMService() // Return mock service when no API key
+      };
+    }
+
     const llm = createLLMInstance(config);
     
     return {

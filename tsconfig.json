@@ -8,7 +8,7 @@
 		],
 		"sourceMap": true,
 		"rootDir": "src",
-		"outDir": "out",
+		"outDir": "dist",
 		"strict": true,
 		"moduleResolution": "node",
 		"esModuleInterop": true,
@@ -22,6 +22,7 @@
 	},
 	"exclude": [
 		"node_modules",
-		".vscode-test"
+		".vscode-test",
+		"webview"
 	]
 }
