@@ -1,1 +1,0 @@
-# genai-vscode-agent
