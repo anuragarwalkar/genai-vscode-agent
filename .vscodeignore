@@ -38,6 +38,7 @@ webview/index.html
 
 # Documentation and testing
 TESTING.md
+PUBLISHING.md
 **/*.test.js
 **/*.test.ts
 
