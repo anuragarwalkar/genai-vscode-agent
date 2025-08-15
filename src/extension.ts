@@ -14,71 +14,217 @@ let pluginManager: any = null;
 let webviewProvider: AviorWebviewProvider;
 
 export async function activate(context: vscode.ExtensionContext) {
-	// Initialize output channel
+	// Initialize output channel first
 	outputChannel = createOutputChannel('Avior AI Agent');
-	logToChannel(outputChannel, 'Activating Avior AI Agent extension...');
+	console.log('=== Avior AI Agent Extension Activation Started ===');
+	logToChannel(outputChannel, 'Starting Avior AI Agent extension activation...');
 
-	// Initialize default configuration
-	await initializeDefaultConfig(context);
-
-	// Initialize plugin system
-	pluginManager = createPluginManager();
-	initializeMockPlugins();
-	logToChannel(outputChannel, 'Plugin system initialized');
-
-	// Create and register webview provider
-	webviewProvider = new AviorWebviewProvider(context);
-	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider(
+	try {
+		// Create and register webview provider FIRST before anything else
+		console.log('Creating webview provider...');
+		webviewProvider = new AviorWebviewProvider(context);
+		
+		console.log('Registering webview provider...');
+		console.log('Using view type:', AviorWebviewProvider.viewType);
+		
+		const webviewRegistration = vscode.window.registerWebviewViewProvider(
 			AviorWebviewProvider.viewType,
-			webviewProvider
-		)
-	);
+			webviewProvider,
+			{
+				webviewOptions: {
+					retainContextWhenHidden: true
+				}
+			}
+		);
+		context.subscriptions.push(webviewRegistration);
+		console.log(`✓ Webview provider registered successfully for: ${AviorWebviewProvider.viewType}`);
+		logToChannel(outputChannel, `Webview provider registered for view type: ${AviorWebviewProvider.viewType}`);
 
-	// Create services
-	const fileService = createFileService();
-	const uiService = createUIService();
-	const configManager = createConfigManager(context);
+		// Verify registration by checking if VS Code recognizes our view
+		console.log('Attempting to verify webview registration...');
+		
+		// Set context to show that extension is active
+		await vscode.commands.executeCommand('setContext', 'avior:activated', true);
 
-	// Check if configuration is complete
-	const config = await configManager.getConfig();
-	if (!isConfigurationComplete(config)) {
-		logToChannel(outputChannel, 'Configuration incomplete, will prompt user on first use');
-	}
+		// Initialize default configuration
+		await initializeDefaultConfig(context);
+		logToChannel(outputChannel, 'Default configuration initialized');
 
-	// Register commands
-	const startAgentCommand = vscode.commands.registerCommand('avior.startAgent', async () => {
+		// Initialize plugin system
+		pluginManager = createPluginManager();
+		initializeMockPlugins();
+		logToChannel(outputChannel, 'Plugin system initialized');
+
+		// Create services
+		const fileService = createFileService();
+		const uiService = createUIService();
+		const configManager = createConfigManager(context);
+
+		// Check if configuration is complete
+		const config = await configManager.getConfig();
+		if (!isConfigurationComplete(config)) {
+			logToChannel(outputChannel, 'Configuration incomplete, will prompt user on first use');
+		}
+
+		// Register commands
+		const startAgentCommand = vscode.commands.registerCommand('avior.startAgent', async () => {
+			await startAgent(configManager, fileService, uiService, context);
+		});
+
+		const stopAgentCommand = vscode.commands.registerCommand('avior.stopAgent', async () => {
+			await stopAgent(uiService);
+		});
+
+		const askAgentCommand = vscode.commands.registerCommand('avior.askAgent', async () => {
+			await askAgent(uiService, context);
+		});
+
+		const managePluginsCommand = vscode.commands.registerCommand('avior.managePlugins', async () => {
+			await managePlugins(uiService, context);
+		});
+
+		// Add to subscriptions
+		context.subscriptions.push(
+			startAgentCommand,
+			stopAgentCommand,
+			askAgentCommand,
+			managePluginsCommand,
+			outputChannel
+		);
+
+		// Register focus command for the webview
+		const focusCommand = vscode.commands.registerCommand('avior.focusChatView', async () => {
+			// Try to focus the sidebar view
+			await vscode.commands.executeCommand('avior.chatView.focus');
+		});
+
+		// Register welcome command to ensure webview is shown
+		const welcomeCommand = vscode.commands.registerCommand('avior.openWelcome', async () => {
+			await vscode.commands.executeCommand('avior.chatView.focus');
+			await vscode.commands.executeCommand('workbench.view.extension.avior-sidebar');
+		});
+
+		// Register command to force reveal webview
+		const revealCommand = vscode.commands.registerCommand('avior.revealChatView', async () => {
+			// Multiple attempts to show the webview
+			const commands = [
+				'avior.chatView.focus',
+				'workbench.view.extension.avior-sidebar',
+				'workbench.action.focusSideBar'
+			];
+			
+			for (const cmd of commands) {
+				try {
+					await vscode.commands.executeCommand(cmd);
+					console.log(`✓ Successfully executed: ${cmd}`);
+				} catch (error) {
+					console.log(`Failed to execute ${cmd}:`, error);
+				}
+			}
+		});
+
+		// Debug command to check webview status
+		const debugCommand = vscode.commands.registerCommand('avior.debug', async () => {
+			const isWebviewReady = webviewProvider.isWebviewReady();
+			console.log('=== EXTENSION DEBUG INFO ===');
+			console.log('Webview Provider:', webviewProvider);
+			console.log('Webview Ready:', isWebviewReady);
+			console.log('View Type:', AviorWebviewProvider.viewType);
+			console.log('Agent Instance:', agentInstance);
+			
+			const message = `
+Webview Provider Status: ${isWebviewReady ? '✅ Ready' : '❌ Not initialized'}
+View Type: ${AviorWebviewProvider.viewType}
+Agent: ${agentInstance ? '✅ Created' : '❌ Not created'}
+Extension Context: ${context ? '✅ Available' : '❌ Missing'}
+			`.trim();
+			
+			console.log(message);
+			vscode.window.showInformationMessage(message);
+		});
+
+		// Force refresh command to re-register everything
+		const forceRefreshCommand = vscode.commands.registerCommand('avior.forceRefresh', async () => {
+			console.log('=== FORCE REFRESH TRIGGERED ===');
+			
+			// Try to re-register the webview provider
+			try {
+				const newRegistration = vscode.window.registerWebviewViewProvider(
+					AviorWebviewProvider.viewType,
+					webviewProvider,
+					{
+						webviewOptions: {
+							retainContextWhenHidden: true
+						}
+					}
+				);
+				context.subscriptions.push(newRegistration);
+				console.log('✓ Webview provider re-registered');
+				
+				// Try to focus the view
+				await vscode.commands.executeCommand('avior.chatView.focus');
+				
+				vscode.window.showInformationMessage('Extension refreshed successfully!');
+			} catch (error) {
+				console.error('Failed to refresh extension:', error);
+				vscode.window.showErrorMessage(`Failed to refresh: ${error}`);
+			}
+		});
+
+		// Test command to verify webview functionality
+		const testCommand = vscode.commands.registerCommand('avior.test', async () => {
+			console.log('=== TEST COMMAND TRIGGERED ===');
+			console.log('Webview Provider exists:', !!webviewProvider);
+			console.log('Webview Ready:', webviewProvider.isWebviewReady());
+			
+			// Try multiple approaches to show the webview
+			const attempts = [
+				async () => await vscode.commands.executeCommand('workbench.view.extension.avior-sidebar'),
+				async () => await vscode.commands.executeCommand('avior.chatView.focus'),
+				async () => await vscode.commands.executeCommand('workbench.action.focusSideBar'),
+			];
+			
+			for (let i = 0; i < attempts.length; i++) {
+				try {
+					console.log(`Attempt ${i + 1}:`);
+					await attempts[i]();
+					console.log(`✓ Attempt ${i + 1} succeeded`);
+					await new Promise(resolve => setTimeout(resolve, 500)); // Wait 500ms
+				} catch (error) {
+					console.log(`❌ Attempt ${i + 1} failed:`, error);
+				}
+			}
+		});
+
+		context.subscriptions.push(focusCommand, welcomeCommand, revealCommand, debugCommand, forceRefreshCommand, testCommand);
+
+		// Auto-start agent mode (as per requirements)
 		await startAgent(configManager, fileService, uiService, context);
-	});
 
-	const stopAgentCommand = vscode.commands.registerCommand('avior.stopAgent', async () => {
-		await stopAgent(uiService);
-	});
+		// Automatically show the webview sidebar - use correct command
+		try {
+			// Add a small delay to ensure everything is properly initialized
+			setTimeout(async () => {
+				try {
+					await vscode.commands.executeCommand('avior.chatView.focus');
+					console.log('✓ Successfully focused chat view');
+				} catch (error) {
+					console.log('Failed to focus chat view, trying alternative:', error);
+					// Alternative: show the activity bar view container
+					await vscode.commands.executeCommand('workbench.view.extension.avior-sidebar');
+				}
+			}, 500);
+		} catch (error) {
+			console.log('Error setting up webview focus:', error);
+		}
 
-	const askAgentCommand = vscode.commands.registerCommand('avior.askAgent', async () => {
-		await askAgent(uiService, context);
-	});
-
-	const managePluginsCommand = vscode.commands.registerCommand('avior.managePlugins', async () => {
-		await managePlugins(uiService, context);
-	});
-
-	// Add to subscriptions
-	context.subscriptions.push(
-		startAgentCommand,
-		stopAgentCommand,
-		askAgentCommand,
-		managePluginsCommand,
-		outputChannel
-	);
-
-	// Auto-start agent mode (as per requirements)
-	await startAgent(configManager, fileService, uiService, context);
-
-	// Automatically show the webview sidebar
-	await vscode.commands.executeCommand('workbench.view.extension.avior-sidebar');
-
-	logToChannel(outputChannel, 'Avior AI Agent extension activated successfully!');
+		console.log('=== Avior AI Agent Extension Activated Successfully ===');
+		logToChannel(outputChannel, 'Avior AI Agent extension activated successfully!');
+	} catch (error) {
+		console.error('Error during extension activation:', error);
+		logToChannel(outputChannel, `Error during activation: ${error}`, 'error');
+		vscode.window.showErrorMessage(`Failed to activate Avior AI Agent: ${error}`);
+	}
 }
 
 // Start the agent

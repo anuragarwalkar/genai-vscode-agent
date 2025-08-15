@@ -10,7 +10,10 @@
     "Other"
   ],
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onView:avior.chatView",
+    "onCommand:avior.focusChatView",
+    "*"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -34,6 +37,36 @@
         "command": "avior.managePlugins",
         "title": "Manage Plugins",
         "category": "Avior"
+      },
+      {
+        "command": "avior.focusChatView",
+        "title": "Focus Chat",
+        "category": "Avior"
+      },
+      {
+        "command": "avior.openWelcome",
+        "title": "Open Avior",
+        "category": "Avior"
+      },
+      {
+        "command": "avior.revealChatView",
+        "title": "Reveal Chat View",
+        "category": "Avior"
+      },
+      {
+        "command": "avior.debug",
+        "title": "Debug Status",
+        "category": "Avior"
+      },
+      {
+        "command": "avior.forceRefresh",
+        "title": "Force Refresh",
+        "category": "Avior"
+      },
+      {
+        "command": "avior.test",
+        "title": "Test Webview",
+        "category": "Avior"
       }
     ],
     "keybindings": [
@@ -41,6 +74,11 @@
         "command": "avior.askAgent",
         "key": "ctrl+shift+a",
         "mac": "cmd+shift+a"
+      },
+      {
+        "command": "avior.focusChatView",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c"
       }
     ],
     "viewsContainers": {
@@ -57,16 +95,11 @@
         {
           "id": "avior.chatView",
           "name": "AI Chat",
-          "when": "true"
+          "when": "true",
+          "icon": "$(comment-discussion)"
         }
       ]
     },
-    "viewsWelcome": [
-      {
-        "view": "avior.chatView",
-        "contents": "Welcome to Avior AI Agent!\n[Start Agent](command:avior.startAgent)\n[Configure](command:avior.managePlugins)"
-      }
-    ],
     "configuration": {
       "type": "object",
       "title": "Avior AI Agent Configuration",

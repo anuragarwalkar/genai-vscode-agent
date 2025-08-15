@@ -8,7 +8,10 @@ export class AviorWebviewProvider implements vscode.WebviewViewProvider {
     private _agentInstance: any = null;
 
     constructor(private readonly extensionContext: vscode.ExtensionContext) {
+        console.log('AviorWebviewProvider constructor called');
+        console.log('ViewType being used:', AviorWebviewProvider.viewType);
         this._extensionContext = extensionContext;
+        console.log('AviorWebviewProvider constructor completed');
     }
 
     // Method to set agent instance from extension.ts
@@ -16,11 +19,20 @@ export class AviorWebviewProvider implements vscode.WebviewViewProvider {
         this._agentInstance = agentInstance;
     }
 
+    // Public method to check if webview is ready
+    public isWebviewReady(): boolean {
+        return this._view !== undefined;
+    }
+
     public resolveWebviewView(
         webviewView: vscode.WebviewView,
         context: vscode.WebviewViewResolveContext,
         _token: vscode.CancellationToken,
     ) {
+        console.log('=== RESOLVING WEBVIEW VIEW ===');
+        console.log('Webview view object:', webviewView);
+        console.log('Context:', context);
+        
         this._view = webviewView;
 
         webviewView.webview.options = {
@@ -30,11 +42,29 @@ export class AviorWebviewProvider implements vscode.WebviewViewProvider {
             ]
         };
 
-        webviewView.webview.html = this._getHtmlForWebview(webviewView.webview);
+        console.log('Setting webview HTML...');
+        try {
+            // Use fallback HTML first to test basic functionality
+            webviewView.webview.html = this._getFallbackHtml();
+            console.log('✓ Webview HTML set successfully with fallback');
+        } catch (error) {
+            console.error('❌ Failed to set webview HTML:', error);
+            // Even simpler fallback
+            webviewView.webview.html = `
+                <html>
+                    <body>
+                        <h1>🤖 Avior AI Agent</h1>
+                        <p>Extension is working!</p>
+                        <button onclick="console.log('Button clicked!')">Test Button</button>
+                    </body>
+                </html>
+            `;
+        }
 
         // Handle messages from the webview
         webviewView.webview.onDidReceiveMessage(
             message => {
+                console.log('Received message from webview:', message);
                 switch (message.command) {
                     case 'sendMessage':
                         this.handleChatMessage(message.text);
@@ -83,7 +113,7 @@ export class AviorWebviewProvider implements vscode.WebviewViewProvider {
 
     private async processAgentRequest(message: string): Promise<string> {
         try {
-            if (!this._agentInstance || !this._agentInstance.isActive()) {
+            if (!this._agentInstance?.isActive?.()) {
                 return "Agent is not active. Please start the agent first using the configuration panel.";
             }
 
@@ -98,7 +128,7 @@ export class AviorWebviewProvider implements vscode.WebviewViewProvider {
             // Process the request using the actual agent
             const response = await this._agentInstance.processRequest(request);
             
-            if (response && response.action) {
+            if (response?.action) {
                 return `**Action**: ${response.action.type}\n\n**Result**: ${response.action.content || 'Action completed successfully'}\n\n**Reasoning**: ${response.reasoning}`;
             } else {
                 return "I processed your request, but didn't receive a detailed response.";
@@ -219,43 +249,94 @@ export class AviorWebviewProvider implements vscode.WebviewViewProvider {
     }
 
     private _getHtmlForWebview(webview: vscode.Webview) {
-        // Get paths to the built React app
-        const webviewPath = vscode.Uri.joinPath(this._extensionContext.extensionUri, 'webview', 'dist');
-        const webviewUri = webview.asWebviewUri(webviewPath);
+        console.log('_getHtmlForWebview called');
         
-        // Read the built index.html and assets
-        const indexPath = vscode.Uri.joinPath(webviewPath, 'index.html');
+        // Get URIs for the built React app assets
+        const webviewUri = vscode.Uri.joinPath(this._extensionContext.extensionUri, 'webview', 'dist');
+        const scriptUri = webview.asWebviewUri(vscode.Uri.joinPath(webviewUri, 'assets', 'index.js'));
+        const styleUri = webview.asWebviewUri(vscode.Uri.joinPath(webviewUri, 'assets', 'index.css'));
+        
         const nonce = getNonce();
-
-        // For now, return a basic HTML that loads the React app
-        // In production, you'd read the actual built index.html file
-        return `<!DOCTYPE html>
+        
+        const html = `<!DOCTYPE html>
         <html lang="en">
         <head>
             <meta charset="UTF-8">
             <meta http-equiv="Content-Security-Policy" content="default-src 'none'; 
                 style-src ${webview.cspSource} 'unsafe-inline'; 
-                script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval';
-                img-src ${webview.cspSource} https: data:; 
-                font-src ${webview.cspSource} https:;
-                connect-src ${webview.cspSource} https:;">
+                script-src 'nonce-${nonce}' ${webview.cspSource} 'unsafe-eval' 'unsafe-inline';
+                connect-src ${webview.cspSource};
+                img-src ${webview.cspSource} data:;">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
             <title>Avior AI Agent</title>
-            <base href="${webviewUri}/">
+            <link rel="stylesheet" href="${styleUri}">
         </head>
         <body>
             <div id="root"></div>
-            <script type="module" nonce="${nonce}">
-                import('./assets/index.js').catch(err => {
-                    console.error('Failed to load React app:', err);
-                    document.getElementById('root').innerHTML = \`
-                        <div style="padding: 20px; text-align: center; color: var(--vscode-errorForeground);">
-                            <h3>Failed to load React UI</h3>
-                            <p>Please rebuild the webview: <code>cd webview && npm run build</code></p>
-                        </div>
-                    \`;
-                });
-            </script>
+            <script nonce="${nonce}" type="module" src="${scriptUri}"></script>
+        </body>
+        </html>`;
+        
+        console.log('Generated React app HTML with URIs:', { scriptUri: scriptUri.toString(), styleUri: styleUri.toString() });
+        return html;
+    }
+
+    private _getFallbackHtml() {
+        return `<!DOCTYPE html>
+        <html lang="en">
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Avior AI Agent</title>
+            <style>
+                body {
+                    font-family: var(--vscode-font-family);
+                    color: var(--vscode-foreground);
+                    background-color: var(--vscode-editor-background);
+                    padding: 20px;
+                    margin: 0;
+                }
+                .container {
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    height: 100vh;
+                    text-align: center;
+                }
+                .icon {
+                    font-size: 48px;
+                    margin-bottom: 16px;
+                }
+                .title {
+                    font-size: 18px;
+                    font-weight: bold;
+                    margin-bottom: 8px;
+                }
+                .message {
+                    color: var(--vscode-descriptionForeground);
+                    margin-bottom: 16px;
+                }
+                button {
+                    background-color: var(--vscode-button-background);
+                    color: var(--vscode-button-foreground);
+                    border: none;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    cursor: pointer;
+                }
+                button:hover {
+                    background-color: var(--vscode-button-hoverBackground);
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="icon">🤖</div>
+                <div class="title">Avior AI Agent</div>
+                <div class="message">Setting up your AI coding assistant...</div>
+                <button onclick="location.reload()">Retry</button>
+            </div>
         </body>
         </html>`;
     }

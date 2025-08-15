@@ -1,71 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
-import styled, { ThemeProvider } from 'styled-components';
 import ChatHeader from './components/ChatHeader';
 import ConfigPanel from './components/ConfigPanel';
 import ChatMessages from './components/ChatMessages';
 import ChatInput from './components/ChatInput';
 import { Message, AgentConfig } from './types';
-
-// Theme setup for VS Code integration
-const theme = {
-  colors: {
-    background: 'var(--vscode-editor-background)',
-    foreground: 'var(--vscode-editor-foreground)',
-    border: 'var(--vscode-panel-border)',
-    accent: 'var(--vscode-button-background)',
-    accentHover: 'var(--vscode-button-hoverBackground)',
-    input: 'var(--vscode-input-background)',
-    inputBorder: 'var(--vscode-input-border)',
-    secondary: 'var(--vscode-button-secondaryBackground)',
-    error: 'var(--vscode-errorForeground)',
-    success: 'var(--vscode-terminal-ansiGreen)',
-  },
-  spacing: {
-    xs: '4px',
-    sm: '8px',
-    md: '16px',
-    lg: '24px',
-    xl: '32px',
-  },
-  borderRadius: '4px',
-  fontSize: {
-    sm: '12px',
-    md: '14px',
-    lg: '16px',
-  }
-};
-
-interface ThemeProps {
-  theme: typeof theme;
-}
-
-const AppContainer = styled.div<ThemeProps>`
-  display: flex;
-  flex-direction: column;
-  height: 100vh;
-  background-color: ${(props: ThemeProps) => props.theme.colors.background};
-  color: ${(props: ThemeProps) => props.theme.colors.foreground};
-  font-family: var(--vscode-font-family);
-  font-size: ${(props: ThemeProps) => props.theme.fontSize.md};
-`;
-
-const ChatContainer = styled.div<{ $isConfigOpen: boolean }>`
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  overflow: hidden;
-  transition: all 0.2s ease;
-  ${(props: { $isConfigOpen: boolean }) => props.$isConfigOpen && `
-    filter: blur(1px);
-    opacity: 0.7;
-  `}
-`;
-
-const Divider = styled.div`
-  height: 1px;
-  background-color: var(--vscode-panel-border);
-  width: 100%;
-`;
 
 declare global {
   interface Window {
@@ -88,11 +26,19 @@ const App: React.FC = () => {
   const vscode = useRef<any>(null);
 
   useEffect(() => {
+    console.log('App component mounting...');
+    
     // Get VS Code API
-    vscode.current = window.acquireVsCodeApi();
+    if (typeof window.acquireVsCodeApi === 'function') {
+      vscode.current = window.acquireVsCodeApi();
+      console.log('VS Code API acquired successfully');
+    } else {
+      console.error('VS Code API not available');
+    }
 
     // Listen for messages from extension
     const messageListener = (event: MessageEvent) => {
+      console.log('Received message from extension:', event.data);
       const message = event.data;
       
       switch (message.command) {
@@ -122,8 +68,17 @@ const App: React.FC = () => {
 
     window.addEventListener('message', messageListener);
 
-    // Request current config
-    vscode.current?.postMessage({ command: 'getConfig' });
+    // Send ready signal to extension
+    if (vscode.current) {
+      console.log('Sending webviewReady message');
+      vscode.current.postMessage({ command: 'webviewReady' });
+      
+      // Request current config
+      setTimeout(() => {
+        console.log('Requesting config');
+        vscode.current?.postMessage({ command: 'getConfig' });
+      }, 100);
+    }
 
     // Add welcome message
     setMessages([{
@@ -148,6 +103,8 @@ Start by typing a message below!`,
   }, []);
 
   const handleSendMessage = (text: string) => {
+    console.log('Sending message:', text);
+    
     // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -160,10 +117,15 @@ Start by typing a message below!`,
     setIsThinking(true);
 
     // Send to extension
-    vscode.current?.postMessage({
-      command: 'sendMessage',
-      text: text
-    });
+    if (vscode.current) {
+      console.log('Posting message to extension');
+      vscode.current.postMessage({
+        command: 'sendMessage',
+        text: text
+      });
+    } else {
+      console.error('VS Code API not available for sending message');
+    }
   };
 
   const handleConfigSave = (newConfig: AgentConfig) => {
@@ -192,36 +154,32 @@ Start by typing a message below!`,
   };
 
   return (
-    <ThemeProvider theme={theme}>
-      <AppContainer>
-        <ChatHeader 
-          onConfigClick={() => setIsConfigOpen(!isConfigOpen)}
-          isConfigOpen={isConfigOpen}
+    <div className="app">
+      <ChatHeader 
+        onConfigClick={() => setIsConfigOpen(!isConfigOpen)}
+        isConfigOpen={isConfigOpen}
+      />
+      
+      {isConfigOpen && (
+        <ConfigPanel
+          config={config}
+          onSave={handleConfigSave}
+          onCancel={() => setIsConfigOpen(false)}
+        />
+      )}
+      
+      <div className={`chat-container ${isConfigOpen ? 'with-config' : ''}`}>
+        <ChatMessages 
+          messages={messages} 
+          isThinking={isThinking}
         />
         
-        <Divider />
-        
-        {isConfigOpen && (
-          <ConfigPanel
-            config={config}
-            onSave={handleConfigSave}
-            onCancel={() => setIsConfigOpen(false)}
-          />
-        )}
-        
-        <ChatContainer $isConfigOpen={isConfigOpen}>
-          <ChatMessages 
-            messages={messages} 
-            isThinking={isThinking}
-          />
-          
-          <ChatInput
-            onSendMessage={handleSendMessage}
-            onQuickAction={handleQuickAction}
-          />
-        </ChatContainer>
-      </AppContainer>
-    </ThemeProvider>
+        <ChatInput
+          onSendMessage={handleSendMessage}
+          onQuickAction={handleQuickAction}
+        />
+      </div>
+    </div>
   );
 };
 
