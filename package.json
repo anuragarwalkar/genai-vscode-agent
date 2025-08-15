@@ -1,13 +1,37 @@
 {
   "name": "avior",
-  "displayName": "GenAI Coding Agent",
+  "displayName": "Avior - GenAI Coding Agent",
   "description": "An AI coding agent that integrates with multiple LLM models using LangChain for autonomous code editing",
   "version": "0.0.1",
+  "publisher": "anuragarwalkar",
+  "author": {
+    "name": "Anurag Arwalkar"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anuragarwalkar/genai-vscode-agent.git"
+  },
+  "bugs": {
+    "url": "https://github.com/anuragarwalkar/genai-vscode-agent/issues"
+  },
+  "homepage": "https://github.com/anuragarwalkar/genai-vscode-agent#readme",
+  "keywords": [
+    "ai",
+    "assistant",
+    "coding",
+    "langchain",
+    "llm",
+    "agent",
+    "automation"
+  ],
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "Machine Learning",
+    "Snippets"
   ],
   "activationEvents": [
     "onStartupFinished"

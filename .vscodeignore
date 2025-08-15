@@ -1,14 +1,48 @@
+# VS Code settings and test files
 .vscode/**
 .vscode-test/**
+.vscode-test.mjs
+
+# Build output (exclude source, include dist)
 out/**
-node_modules/**
 src/**
+**/*.ts
+**/*.map
+
+# Dependencies
+node_modules/**
+
+# Development files
 .gitignore
-.yarnrc
+.git/**
+.DS_Store
+**/.DS_Store
 esbuild.js
 vsc-extension-quickstart.md
+eslint.config.mjs
 **/tsconfig.json
-**/eslint.config.mjs
-**/*.map
-**/*.ts
-**/.vscode-test.*
+**/tsconfig.node.json
+**/package-lock.json
+**/yarn.lock
+
+# Webview development files (keep dist, exclude src)
+webview/src/**
+webview/node_modules/**
+webview/package.json
+webview/package-lock.json
+webview/tsconfig.json
+webview/tsconfig.node.json
+webview/vite.config.ts
+webview/webpack.config.js
+webview/index.html
+
+# Documentation and testing
+TESTING.md
+**/*.test.js
+**/*.test.ts
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
