@@ -12,7 +12,7 @@ export function activate(context: vscode.ExtensionContext) {
     console.log('Congratulations, your extension "ai-agent" is now active!');
 
     // Register the webview provider
-    const provider = new WebviewManager(context.extensionUri);
+    const provider = new WebviewManager(context.extensionUri, context);
     context.subscriptions.push(
         vscode.window.registerWebviewViewProvider(WebviewManager.viewType, provider)
     );

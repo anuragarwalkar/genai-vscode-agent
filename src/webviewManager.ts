@@ -1,12 +1,20 @@
-import { error } from 'console';
 import * as vscode from 'vscode';
+import { createConfigManager } from './configManager';
 
 export class WebviewManager implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'avior.webview';
 	private readonly _extensionUri: vscode.Uri;
+	private readonly _context: vscode.ExtensionContext;
+	private _view?: vscode.WebviewView;
+	private _agentInstance: any = null;
 
-	constructor(extensionUri: vscode.Uri) {
+	constructor(extensionUri: vscode.Uri, context: vscode.ExtensionContext) {
 		this._extensionUri = extensionUri;
+		this._context = context;
+	}
+
+	public setAgentInstance(agentInstance: any) {
+		this._agentInstance = agentInstance;
 	}
 
 	public resolveWebviewView(
@@ -14,6 +22,8 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 		context: vscode.WebviewViewResolveContext,
 		_token: vscode.CancellationToken,
 	) {
+		this._view = webviewView;
+		
 		webviewView.webview.options = {
 			enableScripts: true,
 			localResourceRoots: [
@@ -22,26 +32,233 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 		};
 
 		webviewView.webview.html = this.getHtmlForWebview(webviewView.webview);
+
+		// Handle messages from webview
+		webviewView.webview.onDidReceiveMessage(
+			async (data) => {
+				switch (data.command) {
+					case 'webviewReady':
+						break;
+					case 'getConfig':
+						await this.sendCurrentConfig();
+						break;
+					case 'saveConfig':
+					case 'updateConfig':
+						await this.saveConfiguration(data.config);
+						break;
+					case 'sendMessage':
+						await this.handleChatMessage(data.text);
+						break;
+				}
+			}
+		);
+
+		// Send initial config when webview loads
+		this.sendCurrentConfig();
+	}
+
+	private async sendCurrentConfig() {
+		if (!this._view) {
+			return;
+		}
+
+		try {
+			const configManager = createConfigManager(this._context);
+			const config = await configManager.getConfig();
+			
+			// Send config data to webview
+			this._view.webview.postMessage({
+				command: 'configData',
+				config: config
+			});
+		} catch (error) {
+			console.error('Failed to get config:', error);
+		}
+	}
+
+	private async saveConfiguration(config: any) {
+		if (!this._view) {
+			return;
+		}
+
+		try {
+			const configManager = createConfigManager(this._context);
+			await configManager.updateConfig(config);
+			
+			this._view.webview.postMessage({
+				command: 'configSaved',
+				success: true
+			});
+			
+			vscode.window.showInformationMessage('Configuration saved successfully!');
+		} catch (error) {
+			console.error('Failed to save config:', error);
+			
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			
+			this._view.webview.postMessage({
+				command: 'configSaved',
+				success: false,
+				error: errorMessage
+			});
+			
+			vscode.window.showErrorMessage(`Failed to save configuration: ${errorMessage}`);
+		}
+	}
+
+	private async handleChatMessage(text: string) {
+		if (!this._view) {
+			return;
+		}
+
+		try {
+			// Check if agent is active
+			if (!this._agentInstance || !this._agentInstance.isActive()) {
+				this._view.webview.postMessage({
+					command: 'removeThinking'
+				});
+				
+				this._view.webview.postMessage({
+					command: 'addMessage',
+					message: {
+						role: 'assistant',
+						content: '⚠️ Agent is not running. Please start the agent first using the VS Code command palette (Cmd+Shift+P) and run "Avior: Start Agent".',
+						timestamp: new Date().toISOString(),
+						isThinking: false
+					}
+				});
+				return;
+			}
+
+			// Create agent request
+			const request = {
+				id: Date.now().toString(),
+				prompt: text,
+				timestamp: new Date(),
+				context: []
+			};
+
+			// Start streaming response
+			let streamingMessageId = `streaming-${Date.now()}`;
+			let accumulatedContent = '';
+			
+			// Send initial message to show streaming has started
+			this._view.webview.postMessage({
+				command: 'startStreaming',
+				messageId: streamingMessageId,
+				message: {
+					role: 'assistant',
+					content: '',
+					timestamp: new Date().toISOString()
+				}
+			});
+
+			// Process the request with streaming
+			await this._agentInstance.processRequestStream(request, (token: string) => {
+				accumulatedContent += token;
+				this._view?.webview.postMessage({
+					command: 'updateStreamingMessage',
+					messageId: streamingMessageId,
+					content: accumulatedContent
+				});
+			});
+			
+			// Remove thinking indicator and finalize message
+			this._view.webview.postMessage({
+				command: 'removeThinking'
+			});
+
+			this._view.webview.postMessage({
+				command: 'finalizeStreamingMessage',
+				messageId: streamingMessageId
+			});
+
+		} catch (error) {
+			console.error('Failed to process chat message:', error);
+			
+			// Remove thinking indicator
+			this._view.webview.postMessage({
+				command: 'removeThinking'
+			});
+			
+			// Send error message
+			this._view.webview.postMessage({
+				command: 'addMessage',
+				message: {
+					role: 'assistant',
+					content: `❌ Error processing your request: ${error instanceof Error ? error.message : String(error)}`,
+					timestamp: new Date().toISOString(),
+					isThinking: false
+				}
+			});
+		}
 	}
 
 	private getHtmlForWebview(webview: vscode.Webview): string {
+		try {
+			console.log('WebviewManager: Loading React application');
 			const distPath = vscode.Uri.joinPath(this._extensionUri, 'webview', 'dist');
 			const htmlPath = vscode.Uri.joinPath(distPath, 'index.html');
 			
+			console.log('WebviewManager: HTML path:', htmlPath.fsPath);
+			
+			// Check if file exists
+			const fs = require('fs');
+			if (!fs.existsSync(htmlPath.fsPath)) {
+				console.error('WebviewManager: HTML file does not exist:', htmlPath.fsPath);
+				return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Avior AI Agent</title>
+    <style>
+        body {
+            font-family: var(--vscode-font-family);
+            color: var(--vscode-foreground);
+            background-color: var(--vscode-editor-background);
+            padding: 20px;
+            margin: 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Error: React build not found</h1>
+    <p>Please run: cd webview && npm run build</p>
+</body>
+</html>`;
+			}
+			
 			// Read the HTML file
-			const htmlContent = require('fs').readFileSync(htmlPath.fsPath, 'utf8');
+			const htmlContent = fs.readFileSync(htmlPath.fsPath, 'utf8');
+			console.log('WebviewManager: Read HTML content, length:', htmlContent.length);
 			
 			// Get webview URIs for assets
 			const assetsPath = vscode.Uri.joinPath(distPath, 'assets');
 			const assetsUri = webview.asWebviewUri(assetsPath);
 			
+			console.log('WebviewManager: Assets URI:', assetsUri.toString());
+			
 			// Replace asset paths with webview URIs
 			const updatedHtml = htmlContent
 				.replace(/\/assets\//g, `${assetsUri}/`)
 				.replace(/<script[^>]*crossorigin[^>]*>/g, (match: string) => {
-					return match.replace('crossorigin', '');
-				});
+					return match.replace(' crossorigin', '');
+				})
+				.replace('</head>', `
+    <script>
+        // Prevent multiple VS Code API acquisitions
+        if (typeof window.acquireVsCodeApi === 'function' && !window.vscodeApi) {
+            window.vscodeApi = window.acquireVsCodeApi();
+        }
+    </script>
+</head>`);
 			
+			console.log('WebviewManager: HTML processing complete');
 			return updatedHtml;
+		} catch (error) {
+			console.error('WebviewManager: Error generating HTML:', error);
+			return `<html><body><h1>Error loading webview</h1><p>${error}</p></body></html>`;
+		}
 	}
 }

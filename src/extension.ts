@@ -2,13 +2,17 @@ import * as vscode from 'vscode';
 import { createLLMService } from './llmService';
 import { showConfigurationDialog, showQuickActionsMenu, logToChannel, showPluginManagementDialog, createOutputChannel } from './uiService';
 import { createAgent } from './agent';
-import {  isConfigurationComplete } from './configManager';
+import { isConfigurationComplete, createConfigManager, initializeDefaultConfig } from './configManager';
+import { createConfigWizard } from './configWizard';
+import { createUIService } from './uiService';
+import { createFileService } from './fileService';
 import { AgentRequest } from './types';
 import { WebviewManager } from './webviewManager';
 
 let outputChannel: vscode.OutputChannel;
 let agentInstance: any = null;
 let pluginManager: any = null;
+let webviewProvider: WebviewManager | null = null;
 
 export function activate(context: vscode.ExtensionContext) {
 
@@ -17,23 +21,63 @@ export function activate(context: vscode.ExtensionContext) {
 	console.log('Congratulations, your extension "ai-agent" is now active!');
 	outputChannel = createOutputChannel('Avior AI Agent');
 
+	// Initialize default configuration
+	initializeDefaultConfig(context);
+
+	// Create services
+	const configManager = createConfigManager(context);
+	const uiService = createUIService();
+	const fileService = createFileService();
+	const configWizard = createConfigWizard(context);
 
 	// Register the webview provider
-	const provider = new WebviewManager(context.extensionUri);
+	console.log('Registering webview provider...');
+	webviewProvider = new WebviewManager(context.extensionUri, context);
 	context.subscriptions.push(
-		vscode.window.registerWebviewViewProvider(WebviewManager.viewType, provider)
+		vscode.window.registerWebviewViewProvider(WebviewManager.viewType, webviewProvider)
 	);
+	console.log('Webview provider registered successfully');
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
+	// Register commands
 	const disposable = vscode.commands.registerCommand('avior.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
 		vscode.window.showInformationMessage('Hello World from ai-agent!');
 	});
 
-	context.subscriptions.push(disposable);
+	// Register configuration wizard commands
+	const configureCommand = vscode.commands.registerCommand('avior.configure', async () => {
+		await configWizard.showConfigurationWizard();
+	});
+
+	const selectProviderCommand = vscode.commands.registerCommand('avior.selectProvider', async () => {
+		await configWizard.showProviderSelection();
+	});
+
+	const viewConfigCommand = vscode.commands.registerCommand('avior.viewConfig', async () => {
+		await configWizard.showCurrentConfig();
+	});
+
+	// Register agent commands
+	const startAgentCommand = vscode.commands.registerCommand('avior.startAgent', async () => {
+		await startAgent(configManager, fileService, uiService, context);
+	});
+
+	const stopAgentCommand = vscode.commands.registerCommand('avior.stopAgent', async () => {
+		await stopAgent(uiService);
+	});
+
+	const askAgentCommand = vscode.commands.registerCommand('avior.askAgent', async () => {
+		await askAgent(uiService, context);
+	});
+
+	context.subscriptions.push(
+		disposable,
+		configureCommand,
+		selectProviderCommand,
+		viewConfigCommand,
+		startAgentCommand,
+		stopAgentCommand,
+		askAgentCommand
+	);
 }
 
 // Start the agent
@@ -78,7 +122,7 @@ async function startAgent(
 		agentInstance = createAgent(llmServiceResult.data, fileService, uiService);
 
 		// Pass agent instance to webview provider
-		// webviewProvider.setAgentInstance(agentInstance);
+		webviewProvider?.setAgentInstance(agentInstance);
 
 		// Start the agent
 		const result = await agentInstance.start();

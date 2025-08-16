@@ -21,7 +21,8 @@ let agentState: AgentState = {
     apiKey: '',
     model: 'gpt-4',
     temperature: 0.7,
-    maxTokens: 2000
+    maxTokens: 2000,
+    apiEndpoint: undefined
   }
 };
 
@@ -35,6 +36,8 @@ export const createAgent = (
   stop: () => stopAgent(uiService),
   processRequest: (request: AgentRequest) => 
     processAgentRequest(request, llmService, fileService, uiService),
+  processRequestStream: (request: AgentRequest, onToken: (token: string) => void) => 
+    processAgentRequestStream(request, llmService, fileService, uiService, onToken),
   getState: () => agentState,
   updateConfig: (config: Partial<AgentConfig>) => updateAgentConfig(config),
   isActive: () => agentState.isActive
@@ -86,6 +89,62 @@ const stopAgent = async (uiService: UIService): Promise<Result<void>> => {
   } catch (error) {
     await uiService.showMessage(`Failed to stop agent: ${error}`, 'error');
     return { success: false, error: error as Error };
+  }
+};
+
+// Process an agent request with streaming
+const processAgentRequestStream = async (
+  request: AgentRequest,
+  llmService: LLMService,
+  fileService: FileService,
+  uiService: UIService,
+  onToken: (token: string) => void
+): Promise<AgentResponse> => {
+  // Update current task
+  agentState = {
+    ...agentState,
+    currentTask: request.prompt
+  };
+
+  try {
+    // For simple responses, use streaming
+    const response = await llmService.generateResponseStream(request.prompt, request.context, onToken);
+    
+    // Clear current task
+    agentState = {
+      ...agentState,
+      currentTask: null
+    };
+
+    return {
+      requestId: request.id,
+      action: {
+        type: 'respond',
+        content: response
+      },
+      reasoning: `Processed request: ${request.prompt}`,
+      timestamp: new Date()
+    };
+    
+  } catch (error) {
+    // Clear current task on error
+    agentState = {
+      ...agentState,
+      currentTask: null
+    };
+
+    const errorMessage = `Agent error: ${error}`;
+    onToken(errorMessage);
+    
+    return {
+      requestId: request.id,
+      action: {
+        type: 'respond',
+        content: errorMessage
+      },
+      reasoning: 'Failed to process request',
+      timestamp: new Date()
+    };
   }
 };
 

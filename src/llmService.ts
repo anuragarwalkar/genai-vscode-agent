@@ -1,5 +1,6 @@
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatAnthropic } from '@langchain/anthropic';
+import { ChatGoogleGenerativeAI } from '@langchain/google-genai';
 import { AgentConfig, LLMService, AgentAction, Result } from './types';
 
 // Create mock LLM service when no API key is provided
@@ -11,6 +12,16 @@ const createMockLLMService = (): LLMService => {
   return {
     generateResponse: async (prompt: string, context: ReadonlyArray<string>) => {
       return mockResponse(prompt);
+    },
+    generateResponseStream: async (prompt: string, context: ReadonlyArray<string>, onToken: (token: string) => void) => {
+      const response = await mockResponse(prompt);
+      // Simulate streaming by sending chunks
+      const words = response.split(' ');
+      for (let i = 0; i < words.length; i++) {
+        onToken(words[i] + (i < words.length - 1 ? ' ' : ''));
+        await new Promise(resolve => setTimeout(resolve, 50)); // Small delay to simulate streaming
+      }
+      return response;
     },
     analyzeCode: async (code: string, question: string) => {
       return `Mock Code Analysis: Please configure your API key to analyze the code. Question: ${question}`;
@@ -44,6 +55,8 @@ export const createLLMService = (config: AgentConfig): Result<LLMService> => {
       data: {
         generateResponse: (prompt: string, context: ReadonlyArray<string>) => 
           generateResponse(llm, prompt, context),
+        generateResponseStream: (prompt: string, context: ReadonlyArray<string>, onToken: (token: string) => void) => 
+          generateResponseStream(llm, prompt, context, onToken),
         analyzeCode: (code: string, question: string) => 
           analyzeCode(llm, code, question),
         suggestEdits: (code: string, intent: string) => 
@@ -71,6 +84,23 @@ const createLLMInstance = (config: AgentConfig) => {
         ...baseConfig,
         modelName: config.model,
         openAIApiKey: config.apiKey,
+        ...(config.apiEndpoint && { 
+          configuration: { 
+            baseURL: config.apiEndpoint,
+            defaultHeaders: config.customHeaders || {}
+          } 
+        })
+      });
+    
+    case 'openai-compatible':
+      return new ChatOpenAI({
+        ...baseConfig,
+        modelName: config.model,
+        openAIApiKey: config.apiKey || 'not-needed', // Some local models don't require API key
+        configuration: {
+          baseURL: config.apiEndpoint || 'http://localhost:11434/v1',
+          defaultHeaders: config.customHeaders || {}
+        }
       });
     
     case 'anthropic':
@@ -78,6 +108,15 @@ const createLLMInstance = (config: AgentConfig) => {
         ...baseConfig,
         modelName: config.model,
         anthropicApiKey: config.apiKey,
+        ...(config.apiEndpoint && { baseURL: config.apiEndpoint })
+      });
+    
+    case 'gemini':
+      return new ChatGoogleGenerativeAI({
+        ...baseConfig,
+        modelName: config.model,
+        apiKey: config.apiKey,
+        ...(config.apiEndpoint && { baseURL: config.apiEndpoint })
       });
     
     default:
@@ -87,7 +126,7 @@ const createLLMInstance = (config: AgentConfig) => {
 
 // Generate response with context
 const generateResponse = async (
-  llm: ChatOpenAI | ChatAnthropic,
+  llm: ChatOpenAI | ChatAnthropic | ChatGoogleGenerativeAI,
   prompt: string,
   context: ReadonlyArray<string>
 ): Promise<string> => {
@@ -101,9 +140,36 @@ const generateResponse = async (
   return response.content.toString();
 };
 
+// Generate streaming response with context
+const generateResponseStream = async (
+  llm: ChatOpenAI | ChatAnthropic | ChatGoogleGenerativeAI,
+  prompt: string,
+  context: ReadonlyArray<string>,
+  onToken: (token: string) => void
+): Promise<string> => {
+  const contextStr = context.length > 0 
+    ? `Context:\n${context.join('\n\n')}\n\n`
+    : '';
+  
+  const fullPrompt = `${contextStr}User Request: ${prompt}`;
+  
+  let fullResponse = '';
+  
+  // Use streaming
+  const stream = await llm.stream(fullPrompt);
+  
+  for await (const chunk of stream) {
+    const content = chunk.content.toString();
+    fullResponse += content;
+    onToken(content);
+  }
+  
+  return fullResponse;
+};
+
 // Analyze code with specific question
 const analyzeCode = async (
-  llm: ChatOpenAI | ChatAnthropic,
+  llm: ChatOpenAI | ChatAnthropic | ChatGoogleGenerativeAI,
   code: string,
   question: string
 ): Promise<string> => {
@@ -126,7 +192,7 @@ Provide a clear, concise analysis focusing on the specific question asked.
 
 // Suggest code edits based on intent
 const suggestEdits = async (
-  llm: ChatOpenAI | ChatAnthropic,
+  llm: ChatOpenAI | ChatAnthropic | ChatGoogleGenerativeAI,
   code: string,
   intent: string
 ): Promise<AgentAction> => {
@@ -171,6 +237,11 @@ Be specific and actionable in your suggestions.
 
 // Utility function to validate API key
 export const validateApiKey = (provider: string, apiKey: string): boolean => {
+  // For OpenAI-compatible providers, API key might not be required (local models)
+  if (provider === 'openai-compatible') {
+    return true; // Allow empty API key for local models
+  }
+  
   if (!apiKey || apiKey.trim().length === 0) {
     return false;
   }
@@ -180,13 +251,15 @@ export const validateApiKey = (provider: string, apiKey: string): boolean => {
       return apiKey.startsWith('sk-');
     case 'anthropic':
       return apiKey.startsWith('sk-ant-');
+    case 'gemini':
+      return apiKey.length > 10; // Basic validation for Google API keys
     default:
       return apiKey.length > 10; // Basic validation for custom providers
   }
 };
 
 // Default configurations for different providers
-export const getDefaultConfig = (provider: 'openai' | 'anthropic'): Partial<AgentConfig> => {
+export const getDefaultConfig = (provider: 'openai' | 'anthropic' | 'gemini' | 'openai-compatible'): Partial<AgentConfig> => {
   const baseConfig = {
     temperature: 0.7,
     maxTokens: 2000,
@@ -205,6 +278,21 @@ export const getDefaultConfig = (provider: 'openai' | 'anthropic'): Partial<Agen
         ...baseConfig,
         llmProvider: 'anthropic',
         model: 'claude-3-sonnet-20240229',
+      };
+    
+    case 'gemini':
+      return {
+        ...baseConfig,
+        llmProvider: 'gemini',
+        model: 'gemini-pro',
+      };
+    
+    case 'openai-compatible':
+      return {
+        ...baseConfig,
+        llmProvider: 'openai-compatible',
+        model: 'llama2', // Common default for local models
+        apiEndpoint: 'http://localhost:11434/v1', // Default Ollama endpoint
       };
     
     default:

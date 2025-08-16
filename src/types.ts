@@ -2,11 +2,13 @@ import * as vscode from 'vscode';
 
 // Core types for the AI coding agent
 export interface AgentConfig {
-  readonly llmProvider: 'openai' | 'anthropic' | 'custom';
+  readonly llmProvider: 'openai' | 'anthropic' | 'gemini' | 'openai-compatible' | 'custom';
   readonly apiKey: string;
   readonly model: string;
   readonly temperature: number;
   readonly maxTokens: number;
+  readonly apiEndpoint?: string; // Optional custom endpoint for providers
+  readonly customHeaders?: Record<string, string>; // Custom headers for API requests
 }
 
 export interface AgentState {
@@ -79,9 +81,10 @@ export interface PluginRegistry {
 
 // Service interfaces
 export interface LLMService {
-  readonly generateResponse: (prompt: string, context: ReadonlyArray<string>) => Promise<string>;
-  readonly analyzeCode: (code: string, question: string) => Promise<string>;
-  readonly suggestEdits: (code: string, intent: string) => Promise<AgentAction>;
+  generateResponse: (prompt: string, context: ReadonlyArray<string>) => Promise<string>;
+  generateResponseStream: (prompt: string, context: ReadonlyArray<string>, onToken: (token: string) => void) => Promise<string>;
+  analyzeCode: (code: string, question: string) => Promise<string>;
+  suggestEdits: (code: string, intent: string) => Promise<AgentAction>;
 }
 
 export interface FileService {

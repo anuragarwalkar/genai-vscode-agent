@@ -128,6 +128,27 @@ pre {
   }
 }
 
+/* Streaming cursor animation */
+.streaming-cursor {
+  display: inline-block;
+  margin-left: 2px;
+  animation: blink 1s infinite;
+  color: var(--vscode-editor-foreground);
+}
+
+@keyframes blink {
+  0%, 50% {
+    opacity: 1;
+  }
+  51%, 100% {
+    opacity: 0;
+  }
+}
+
+.message.streaming .message-text {
+  position: relative;
+}
+
 /* Utility classes */
 .text-truncate {
   overflow: hidden;

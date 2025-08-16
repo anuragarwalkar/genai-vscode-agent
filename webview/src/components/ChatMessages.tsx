@@ -4,9 +4,10 @@ import { Message } from '../types';
 interface ChatMessagesProps {
   messages: Message[];
   isThinking: boolean;
+  streamingMessages?: Map<string, Message>;
 }
 
-const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isThinking }) => {
+const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isThinking, streamingMessages }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -17,14 +18,14 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isThinking }) => 
     scrollToBottom();
   }, [messages, isThinking]);
 
-  const formatMessage = (content: string) => {
+  const formatMessage = (content: string, messageId: string) => {
     // Simple markdown-like formatting
     return content
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
       .replace(/\*(.*?)\*/g, '<em>$1</em>')
       .replace(/`(.*?)`/g, '<code>$1</code>')
       .split('\n').map((line, i) => (
-        <div key={`line-${i}-${line.slice(0, 10)}`} dangerouslySetInnerHTML={{ __html: line }} />
+        <div key={`${messageId}-line-${i}`} dangerouslySetInnerHTML={{ __html: line }} />
       ));
   };
 
@@ -47,24 +48,30 @@ const ChatMessages: React.FC<ChatMessagesProps> = ({ messages, isThinking }) => 
         </div>
       )}
       
-      {messages.map((message) => (
+      {messages.map((message) => {
+        const isStreaming = streamingMessages?.has(message.id);
+        return (
         <div 
           key={message.id} 
-          className={`message ${message.role}`}
+          className={`message ${message.role} ${isStreaming ? 'streaming' : ''}`}
         >
           <div className="message-avatar">
             {message.role === 'user' ? '👤' : '🤖'}
           </div>
           <div className="message-content">
             <div className="message-text">
-              {formatMessage(message.content)}
+              {formatMessage(message.content, message.id)}
+              {isStreaming && (
+                <span className="streaming-cursor">▊</span>
+              )}
             </div>
             <div className="message-timestamp">
               {message.timestamp.toLocaleTimeString()}
             </div>
           </div>
         </div>
-      ))}
+        );
+      })}
       
       {isThinking && (
         <div className="message assistant thinking">

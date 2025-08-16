@@ -40,10 +40,89 @@
   "contributes": {
     "commands": [
       {
-        "command": "ai-agent.helloWorld",
-        "title": "Hello World"
+        "command": "avior.helloWorld",
+        "title": "Hello World",
+        "category": "Avior"
+      },
+      {
+        "command": "avior.configure",
+        "title": "Configure LLM Provider",
+        "category": "Avior",
+        "icon": "$(settings-gear)"
+      },
+      {
+        "command": "avior.selectProvider",
+        "title": "Select LLM Provider",
+        "category": "Avior",
+        "icon": "$(symbol-namespace)"
+      },
+      {
+        "command": "avior.viewConfig",
+        "title": "View Current Configuration",
+        "category": "Avior",
+        "icon": "$(eye)"
+      },
+      {
+        "command": "avior.startAgent",
+        "title": "Start AI Agent",
+        "category": "Avior",
+        "icon": "$(play)"
+      },
+      {
+        "command": "avior.stopAgent",
+        "title": "Stop AI Agent",
+        "category": "Avior",
+        "icon": "$(stop)"
+      },
+      {
+        "command": "avior.askAgent",
+        "title": "Ask AI Agent",
+        "category": "Avior",
+        "icon": "$(comment-discussion)"
       }
     ],
+    "keybindings": [
+      {
+        "command": "avior.askAgent",
+        "key": "cmd+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "avior.configure",
+        "key": "cmd+shift+c",
+        "mac": "cmd+shift+c"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "avior.configure"
+        },
+        {
+          "command": "avior.selectProvider"
+        },
+        {
+          "command": "avior.viewConfig"
+        },
+        {
+          "command": "avior.startAgent"
+        },
+        {
+          "command": "avior.stopAgent"
+        },
+        {
+          "command": "avior.askAgent"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "avior.askAgent",
+          "group": "avior",
+          "when": "editorTextFocus"
+        }
+      ]
+    },
     "viewsContainers": {
       "activitybar": [
         {
@@ -99,6 +178,7 @@
   },
   "dependencies": {
     "@langchain/anthropic": "^0.3.26",
+    "@langchain/google-genai": "^0.1.12",
     "@langchain/openai": "^0.6.7"
   }
 }

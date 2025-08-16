@@ -6,6 +6,11 @@ import { validateApiKey, getDefaultConfig } from './llmService';
 const CONFIG_SECTION = 'avior';
 const API_KEY_STORAGE = 'apiKey';
 const PROVIDER_STORAGE = 'provider';
+const MODEL_STORAGE = 'model';
+const TEMPERATURE_STORAGE = 'temperature';
+const MAX_TOKENS_STORAGE = 'maxTokens';
+const API_ENDPOINT_STORAGE = 'apiEndpoint';
+const CUSTOM_HEADERS_STORAGE = 'customHeaders';
 
 // Factory function to create config manager
 export const createConfigManager = (context: vscode.ExtensionContext) => ({
@@ -21,14 +26,23 @@ const getAgentConfig = async (context: vscode.ExtensionContext): Promise<AgentCo
   
   // Get secure values from secret storage
   const apiKey = await context.secrets.get(API_KEY_STORAGE) || '';
-  const provider = context.globalState.get<'openai' | 'anthropic'>(PROVIDER_STORAGE) || 'openai';
+  const provider = context.globalState.get<'openai' | 'anthropic' | 'gemini' | 'openai-compatible'>(PROVIDER_STORAGE) || 'openai';
+  
+  // Get other configuration values from global state (persistent storage)
+  const model = context.globalState.get<string>(MODEL_STORAGE) || getDefaultModel(provider);
+  const temperature = context.globalState.get<number>(TEMPERATURE_STORAGE) ?? 0.7;
+  const maxTokens = context.globalState.get<number>(MAX_TOKENS_STORAGE) ?? 2000;
+  const apiEndpoint = context.globalState.get<string>(API_ENDPOINT_STORAGE);
+  const customHeaders = context.globalState.get<Record<string, string>>(CUSTOM_HEADERS_STORAGE);
   
   return {
     llmProvider: provider,
     apiKey: apiKey,
-    model: config.get('model', getDefaultModel(provider)),
-    temperature: config.get('temperature', 0.7),
-    maxTokens: config.get('maxTokens', 2000)
+    model: model,
+    temperature: temperature,
+    maxTokens: maxTokens,
+    apiEndpoint: apiEndpoint,
+    customHeaders: customHeaders
   };
 };
 
@@ -37,19 +51,25 @@ const updateAgentConfig = async (
   configUpdate: Partial<AgentConfig>,
   context: vscode.ExtensionContext
 ): Promise<void> => {
-  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-  
-  // Update VS Code settings
+  // Store all configuration in global state for persistence
   if (configUpdate.model !== undefined) {
-    await config.update('model', configUpdate.model, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(MODEL_STORAGE, configUpdate.model);
   }
   
   if (configUpdate.temperature !== undefined) {
-    await config.update('temperature', configUpdate.temperature, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(TEMPERATURE_STORAGE, configUpdate.temperature);
   }
   
   if (configUpdate.maxTokens !== undefined) {
-    await config.update('maxTokens', configUpdate.maxTokens, vscode.ConfigurationTarget.Global);
+    await context.globalState.update(MAX_TOKENS_STORAGE, configUpdate.maxTokens);
+  }
+  
+  if (configUpdate.apiEndpoint !== undefined) {
+    await context.globalState.update(API_ENDPOINT_STORAGE, configUpdate.apiEndpoint);
+  }
+  
+  if (configUpdate.customHeaders !== undefined) {
+    await context.globalState.update(CUSTOM_HEADERS_STORAGE, configUpdate.customHeaders);
   }
   
   // Update secure storage
@@ -64,12 +84,12 @@ const updateAgentConfig = async (
 
 // Reset configuration to defaults
 const resetAgentConfig = async (context: vscode.ExtensionContext): Promise<void> => {
-  const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-  
-  // Reset to defaults
-  await config.update('model', undefined, vscode.ConfigurationTarget.Global);
-  await config.update('temperature', undefined, vscode.ConfigurationTarget.Global);
-  await config.update('maxTokens', undefined, vscode.ConfigurationTarget.Global);
+  // Clear all stored configuration
+  await context.globalState.update(MODEL_STORAGE, undefined);
+  await context.globalState.update(TEMPERATURE_STORAGE, undefined);
+  await context.globalState.update(MAX_TOKENS_STORAGE, undefined);
+  await context.globalState.update(API_ENDPOINT_STORAGE, undefined);
+  await context.globalState.update(CUSTOM_HEADERS_STORAGE, undefined);
   
   // Clear secure storage
   await context.secrets.delete(API_KEY_STORAGE);
@@ -107,7 +127,7 @@ const validateAgentConfig = (config: AgentConfig): { valid: boolean; errors: str
 };
 
 // Get default model for provider
-const getDefaultModel = (provider: 'openai' | 'anthropic'): string => {
+const getDefaultModel = (provider: 'openai' | 'anthropic' | 'gemini' | 'openai-compatible'): string => {
   const defaults = getDefaultConfig(provider);
   return defaults.model || 'gpt-4';
 };
@@ -131,12 +151,31 @@ export const getConfigurationSchema = () => ({
       type: 'string',
       description: 'The AI model to use',
       enum: [
+        // OpenAI models
         'gpt-4',
         'gpt-4-turbo',
+        'gpt-4o',
         'gpt-3.5-turbo',
+        // Anthropic models
         'claude-3-opus-20240229',
         'claude-3-sonnet-20240229',
-        'claude-3-haiku-20240307'
+        'claude-3-haiku-20240307',
+        // Google Gemini models
+        'gemini-pro',
+        'gemini-pro-vision',
+        'gemini-1.5-pro',
+        'gemini-1.5-flash',
+        // OpenAI-compatible / Local models
+        'llama2',
+        'llama2:13b',
+        'llama2:70b',
+        'codellama',
+        'codellama:13b',
+        'mistral',
+        'mixtral:8x7b',
+        'neural-chat',
+        'starcode',
+        'wizardcoder'
       ],
       default: 'gpt-4'
     },
@@ -153,6 +192,11 @@ export const getConfigurationSchema = () => ({
       minimum: 100,
       maximum: 8000,
       default: 2000
+    },
+    apiEndpoint: {
+      type: 'string',
+      description: 'Custom API endpoint (optional)',
+      default: ''
     }
   }
 });
@@ -162,20 +206,11 @@ export const initializeDefaultConfig = async (context: vscode.ExtensionContext):
   const hasRunBefore = context.globalState.get('hasInitialized', false);
   
   if (!hasRunBefore) {
-    // Set default values
-    const config = vscode.workspace.getConfiguration(CONFIG_SECTION);
-    
-    if (!config.has('model')) {
-      await config.update('model', 'gpt-4', vscode.ConfigurationTarget.Global);
-    }
-    
-    if (!config.has('temperature')) {
-      await config.update('temperature', 0.7, vscode.ConfigurationTarget.Global);
-    }
-    
-    if (!config.has('maxTokens')) {
-      await config.update('maxTokens', 2000, vscode.ConfigurationTarget.Global);
-    }
+    // Set default values in global state for persistence
+    await context.globalState.update(MODEL_STORAGE, 'gpt-4');
+    await context.globalState.update(TEMPERATURE_STORAGE, 0.7);
+    await context.globalState.update(MAX_TOKENS_STORAGE, 2000);
+    await context.globalState.update(PROVIDER_STORAGE, 'openai');
     
     await context.globalState.update('hasInitialized', true);
   }
