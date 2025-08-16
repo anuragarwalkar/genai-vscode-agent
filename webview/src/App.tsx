@@ -29,11 +29,13 @@ const getVscodeApi = () => {
       globalVscodeApi = window.acquireVsCodeApi();
       return globalVscodeApi;
     } catch (error) {
+      console.warn('Failed to acquire VS Code API:', error);
       // Try to use cached API if available
       if (window.vscodeApi) {
         globalVscodeApi = window.vscodeApi;
         return globalVscodeApi;
       }
+      return null;
     }
   }
   
@@ -41,10 +43,24 @@ const getVscodeApi = () => {
 };
 
 const App: React.FC = () => {
-  const [messages, setMessages] = useState<Message[]>([{
-    id: 'welcome-1',
-    role: 'assistant',
-    content: `👋 Welcome to Avior AI Agent!
+  const vscode = useRef<any>(null);
+  
+  // Initialize state from VS Code's persistent state or use defaults
+  const getInitialState = () => {
+    const vsCodeApi = getVscodeApi();
+    let savedState = null;
+    
+    try {
+      savedState = vsCodeApi?.getState();
+    } catch (error) {
+      console.warn('Failed to get state from VS Code:', error);
+    }
+    
+    // If we have saved messages, restore them with proper timestamp objects
+    let messages = [{
+      id: 'welcome-1',
+      role: 'assistant' as const,
+      content: `👋 Welcome to Avior AI Agent!
 
 I can help you with:
 • 🔍 Search your codebase
@@ -54,30 +70,80 @@ I can help you with:
 • 🐛 Debug issues
 
 Start by typing a message below!`,
-    timestamp: new Date()
-  }]);
-  const [isConfigOpen, setIsConfigOpen] = useState(false);
-  const [config, setConfig] = useState<AgentConfig>({
-    llmProvider: 'openai',
-    model: 'gpt-4',
-    apiKey: '',
-    temperature: 0.7,
-    maxTokens: 2000,
-    apiEndpoint: '',
-    customHeaders: {}
-  });
-  const [isThinking, setIsThinking] = useState(false);
-  const [streamingMessages, setStreamingMessages] = useState<Map<string, Message>>(new Map());
+      timestamp: new Date()
+    }];
+
+    if (savedState?.messages) {
+      messages = savedState.messages.map((msg: any) => ({
+        ...msg,
+        timestamp: new Date(msg.timestamp) // Ensure timestamp is a Date object
+      }));
+    }
+    
+    return {
+      messages,
+      isConfigOpen: savedState?.isConfigOpen || false,
+      config: savedState?.config || {
+        llmProvider: 'openai',
+        model: 'gpt-4',
+        apiKey: '',
+        temperature: 0.7,
+        maxTokens: 2000,
+        apiEndpoint: '',
+        customHeaders: {}
+      },
+      isThinking: false // Always reset thinking state on reload/initialization
+    };
+  };
+
+  const initialState = getInitialState();
   
-  const vscode = useRef<any>(null);
+  const [messages, setMessages] = useState<Message[]>(initialState.messages);
+  const [isConfigOpen, setIsConfigOpen] = useState(initialState.isConfigOpen);
+  const [config, setConfig] = useState<AgentConfig>(initialState.config);
+  const [isThinking, setIsThinking] = useState(initialState.isThinking);
+  const [streamingMessages, setStreamingMessages] = useState<Map<string, Message>>(new Map());
+  const [isWebviewReady, setIsWebviewReady] = useState(false);
+
+  // Function to save state to VS Code's persistent storage with debounce
+  const saveState = useCallback(() => {
+    if (vscode.current) {
+      try {
+        vscode.current.setState({
+          messages,
+          isConfigOpen,
+          config,
+          isThinking
+        });
+      } catch (error) {
+        console.warn('Failed to save state to VS Code:', error);
+      }
+    }
+  }, [messages, isConfigOpen, config, isThinking]);
+
+  // Debounced state saving to prevent too frequent updates
+  const debouncedSaveState = useCallback(() => {
+    const timeoutId = setTimeout(saveState, 300);
+    return () => clearTimeout(timeoutId);
+  }, [saveState]);
+
+  // Save state whenever it changes (debounced)
+  useEffect(() => {
+    const cleanup = debouncedSaveState();
+    return cleanup;
+  }, [debouncedSaveState]);
 
   useEffect(() => {
+    console.log('App: Initializing...');
+    
     // Get VS Code API safely
     vscode.current = getVscodeApi();
+    console.log('App: VS Code API acquired:', !!vscode.current);
 
     // Listen for messages from extension
     const messageListener = (event: MessageEvent) => {
       const message = event.data;
+      console.log('App: Received message:', message.command, message);
       
       switch (message.command) {
         case 'addMessage':
@@ -135,6 +201,10 @@ Start by typing a message below!`,
           setIsThinking(false);
           break;
           
+        case 'agentReady':
+          setIsThinking(false);
+          break;
+          
         case 'configData':
           setConfig(message.config);
           break;
@@ -145,12 +215,34 @@ Start by typing a message below!`,
 
     // Send ready signal to extension
     if (vscode.current) {
-      vscode.current.postMessage({ command: 'webviewReady' });
-      
-      // Request current config
-      setTimeout(() => {
-        vscode.current?.postMessage({ command: 'getConfig' });
-      }, 100);
+      try {
+        console.log('App: Sending ready signal...');
+        const hasRestoredState = initialState.messages.length > 1;
+        vscode.current.postMessage({ 
+          command: 'webviewReady',
+          hasRestoredState 
+        });
+        console.log('App: Ready signal sent successfully');
+        setIsWebviewReady(true);
+        
+        // Request current config
+        setTimeout(() => {
+          try {
+            console.log('App: Requesting config...');
+            vscode.current?.postMessage({ command: 'getConfig' });
+          } catch (error) {
+            console.warn('Failed to request config:', error);
+          }
+        }, 100);
+      } catch (error) {
+        console.warn('Failed to send ready signal:', error);
+        // Still mark as ready even if we can't send the signal
+        setIsWebviewReady(true);
+      }
+    } else {
+      console.warn('App: No VS Code API available');
+      // Mark as ready anyway to prevent infinite loading
+      setIsWebviewReady(true);
     }
 
     return () => {
@@ -172,10 +264,15 @@ Start by typing a message below!`,
 
     // Send to extension
     if (vscode.current) {
-      vscode.current.postMessage({
-        command: 'sendMessage',
-        text: text
-      });
+      try {
+        vscode.current.postMessage({
+          command: 'sendMessage',
+          text: text
+        });
+      } catch (error) {
+        console.warn('Failed to send message to extension:', error);
+        setIsThinking(false);
+      }
     }
   }, []);
 
@@ -184,10 +281,14 @@ Start by typing a message below!`,
     setIsConfigOpen(false);
     
     // Send to extension
-    vscode.current?.postMessage({
-      command: 'updateConfig',
-      config: newConfig
-    });
+    try {
+      vscode.current?.postMessage({
+        command: 'updateConfig',
+        config: newConfig
+      });
+    } catch (error) {
+      console.warn('Failed to update config:', error);
+    }
   }, []);
 
   const handleQuickAction = useCallback((action: string) => {
@@ -203,6 +304,19 @@ Start by typing a message below!`,
       handleSendMessage(prompt);
     }
   }, [handleSendMessage]);
+
+  if (!isWebviewReady) {
+    return (
+      <div className="app loading">
+        <div className="loading-content">
+          <div className="loading-spinner">
+            <div className="spinner"></div>
+          </div>
+          <p>Initializing Avior AI Agent...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app">

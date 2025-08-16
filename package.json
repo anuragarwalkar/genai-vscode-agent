@@ -40,11 +40,6 @@
   "contributes": {
     "commands": [
       {
-        "command": "avior.helloWorld",
-        "title": "Hello World",
-        "category": "Avior"
-      },
-      {
         "command": "avior.configure",
         "title": "Configure LLM Provider",
         "category": "Avior",
@@ -61,18 +56,6 @@
         "title": "View Current Configuration",
         "category": "Avior",
         "icon": "$(eye)"
-      },
-      {
-        "command": "avior.startAgent",
-        "title": "Start AI Agent",
-        "category": "Avior",
-        "icon": "$(play)"
-      },
-      {
-        "command": "avior.stopAgent",
-        "title": "Stop AI Agent",
-        "category": "Avior",
-        "icon": "$(stop)"
       },
       {
         "command": "avior.askAgent",
@@ -104,12 +87,6 @@
         },
         {
           "command": "avior.viewConfig"
-        },
-        {
-          "command": "avior.startAgent"
-        },
-        {
-          "command": "avior.stopAgent"
         },
         {
           "command": "avior.askAgent"

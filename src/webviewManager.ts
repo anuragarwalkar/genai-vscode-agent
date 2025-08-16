@@ -17,6 +17,14 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 		this._agentInstance = agentInstance;
 	}
 
+	public notifyAgentReady() {
+		if (this._view) {
+			this._view.webview.postMessage({
+				command: 'agentReady'
+			});
+		}
+	}
+
 	public resolveWebviewView(
 		webviewView: vscode.WebviewView,
 		context: vscode.WebviewViewResolveContext,
@@ -38,6 +46,10 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 			async (data) => {
 				switch (data.command) {
 					case 'webviewReady':
+						// If agent is already initialized, notify webview
+						if (this._agentInstance) {
+							this.notifyAgentReady();
+						}
 						break;
 					case 'getConfig':
 						await this.sendCurrentConfig();
@@ -112,8 +124,8 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 		}
 
 		try {
-			// Check if agent is active
-			if (!this._agentInstance || !this._agentInstance.isActive()) {
+			// Check if agent instance exists
+			if (!this._agentInstance) {
 				this._view.webview.postMessage({
 					command: 'removeThinking'
 				});
@@ -122,7 +134,7 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 					command: 'addMessage',
 					message: {
 						role: 'assistant',
-						content: '⚠️ Agent is not running. Please start the agent first using the VS Code command palette (Cmd+Shift+P) and run "Avior: Start Agent".',
+						content: '⚠️ Agent is not initialized. Please reload VS Code or check the extension configuration.',
 						timestamp: new Date().toISOString(),
 						isThinking: false
 					}

@@ -57,16 +57,13 @@ export function activate(context: vscode.ExtensionContext) {
 	});
 
 	// Register agent commands
-	const startAgentCommand = vscode.commands.registerCommand('avior.startAgent', async () => {
-		await startAgent(configManager, fileService, uiService, context);
-	});
-
-	const stopAgentCommand = vscode.commands.registerCommand('avior.stopAgent', async () => {
-		await stopAgent(uiService);
-	});
-
 	const askAgentCommand = vscode.commands.registerCommand('avior.askAgent', async () => {
 		await askAgent(uiService, context);
+	});
+
+	// Auto-start the agent when extension activates (non-blocking)
+	startAgent(configManager, fileService, uiService, context).catch(error => {
+		console.error('Failed to start agent during activation:', error);
 	});
 
 	context.subscriptions.push(
@@ -74,8 +71,6 @@ export function activate(context: vscode.ExtensionContext) {
 		configureCommand,
 		selectProviderCommand,
 		viewConfigCommand,
-		startAgentCommand,
-		stopAgentCommand,
 		askAgentCommand
 	);
 }
@@ -128,6 +123,13 @@ async function startAgent(
 		const result = await agentInstance.start();
 		if (result.success) {
 			logToChannel(outputChannel, 'Agent started successfully');
+			
+			// Notify webview that agent is ready (with a small delay to ensure webview is loaded)
+			setTimeout(() => {
+				if (webviewProvider) {
+					webviewProvider.notifyAgentReady();
+				}
+			}, 1000);
 		} else {
 			logToChannel(outputChannel, `Failed to start agent: ${result.error}`, 'error');
 		}
@@ -162,11 +164,6 @@ async function stopAgent(uiService: any) {
 // Ask the agent to perform a task
 async function askAgent(uiService: any, context: vscode.ExtensionContext) {
 	try {
-		if (!agentInstance?.isActive()) {
-			await uiService.showMessage('Agent is not running. Please start the agent first.', 'warning');
-			return;
-		}
-
 		// Show quick actions menu first
 		const actionType = await showQuickActionsMenu();
 		if (!actionType) {
