@@ -102,6 +102,65 @@ export interface UIService {
   readonly showProgress: <T>(task: (progress: vscode.Progress<{message?: string; increment?: number}>) => Promise<T>) => Promise<T>;
 }
 
+// Context types for enhanced LLM interaction
+export interface ContextItem {
+  readonly type: 'file' | 'folder' | 'error' | 'url' | 'selection' | 'workspace';
+  readonly label: string;
+  readonly content: string;
+  readonly metadata?: Record<string, any>;
+  readonly path?: string;
+  readonly summary?: string;
+  readonly line?: number;
+  readonly message?: string;
+  readonly file?: string;
+}
+
+export interface GitInfo {
+  readonly branch: string;
+  readonly repository: string;
+  readonly changedFiles: ReadonlyArray<string>;
+}
+
+export interface WorkspaceContext {
+  readonly files: ReadonlyArray<ContextItem>;
+  readonly errors: ReadonlyArray<ContextItem>;
+  readonly selectedText?: string;
+  readonly currentFile?: string;
+  readonly workspaceInfo: {
+    readonly name: string;
+    readonly path: string;
+    readonly fileCount: number;
+    readonly languages: ReadonlyArray<string>;
+  };
+  readonly gitInfo?: GitInfo;
+}
+
+export interface EnhancedAgentRequest extends AgentRequest {
+  readonly workspaceContext: WorkspaceContext;
+  readonly includePatterns?: ReadonlyArray<string>; // @file, @folder patterns
+}
+
+export interface ContextBuilder {
+  readonly addFile: (filePath: string) => Promise<ContextBuilder>;
+  readonly addFolder: (folderPath: string) => Promise<ContextBuilder>;
+  readonly addProblems: () => Promise<ContextBuilder>;
+  readonly addUrl: (url: string) => Promise<ContextBuilder>;
+  readonly addSelection: () => Promise<ContextBuilder>;
+  readonly build: () => Promise<WorkspaceContext>;
+}
+
+// Enhanced LLM Service with context awareness
+export interface EnhancedLLMService extends LLMService {
+  generateContextAwareResponse: (prompt: string, workspaceContext: WorkspaceContext) => Promise<string>;
+  generateContextAwareResponseStream: (
+    prompt: string, 
+    workspaceContext: WorkspaceContext, 
+    onToken: (token: string) => void
+  ) => Promise<string>;
+  determineAction: (prompt: string, workspaceContext: WorkspaceContext) => Promise<AgentAction>;
+  suggestFileOperation: (intent: string, workspaceContext: WorkspaceContext) => Promise<AgentAction>;
+}
+
 // Utility types
 export type Result<T, E = Error> = 
   | { readonly success: true; readonly data: T }

@@ -25,6 +25,18 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 		}
 	}
 
+	private requiresActionProcessing(text: string): boolean {
+		const lowerText = text.toLowerCase();
+		const actionKeywords = [
+			'create', 'new', 'add', 'generate',
+			'edit', 'modify', 'change', 'update', 'refactor',
+			'search', 'find', 'look for', 'locate',
+			'analyze', 'review', 'explain', 'check'
+		];
+		
+		return actionKeywords.some(keyword => lowerText.includes(keyword));
+	}
+
 	public resolveWebviewView(
 		webviewView: vscode.WebviewView,
 		context: vscode.WebviewViewResolveContext,
@@ -60,6 +72,9 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 						break;
 					case 'sendMessage':
 						await this.handleChatMessage(data.text);
+						break;
+					case 'clearChat':
+						await this.handleClearChat();
 						break;
 				}
 			}
@@ -150,40 +165,72 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 				context: []
 			};
 
-			// Start streaming response
-			let streamingMessageId = `streaming-${Date.now()}`;
-			let accumulatedContent = '';
+			// Check if this requires special action processing
+			const needsActionProcessing = this.requiresActionProcessing(text);
 			
-			// Send initial message to show streaming has started
-			this._view.webview.postMessage({
-				command: 'startStreaming',
-				messageId: streamingMessageId,
-				message: {
-					role: 'assistant',
-					content: '',
-					timestamp: new Date().toISOString()
-				}
-			});
-
-			// Process the request with streaming
-			await this._agentInstance.processRequestStream(request, (token: string) => {
-				accumulatedContent += token;
-				this._view?.webview.postMessage({
-					command: 'updateStreamingMessage',
-					messageId: streamingMessageId,
-					content: accumulatedContent
+			if (needsActionProcessing) {
+				// Set thinking state without adding messages
+				// (The App.tsx already shows thinking state from handleSendMessage)
+				
+				// Use full processRequest for file operations
+				const response = await this._agentInstance.processRequest(request);
+				
+				// Remove thinking indicator
+				this._view.webview.postMessage({
+					command: 'removeThinking'
 				});
-			});
-			
-			// Remove thinking indicator and finalize message
-			this._view.webview.postMessage({
-				command: 'removeThinking'
-			});
+				
+				// Use the content from the agent's response (which is already nicely formatted)
+				const responseContent = response.action.content || `${response.action.type} action completed: ${response.reasoning}`;
+				
+				// Send the response
+				this._view.webview.postMessage({
+					command: 'addMessage',
+					message: {
+						role: 'assistant',
+						content: responseContent,
+						timestamp: new Date().toISOString(),
+						isThinking: false
+					}
+				});
+			} else {
+				// Use streaming for simple responses
+				// Start streaming response
+				let streamingMessageId = `streaming-${Date.now()}`;
+				let accumulatedContent = '';
+				
+				// Send initial message to show streaming has started
+				this._view.webview.postMessage({
+					command: 'startStreaming',
+					messageId: streamingMessageId,
+					message: {
+						role: 'assistant',
+						content: '',
+						timestamp: new Date().toISOString()
+					}
+				});
 
-			this._view.webview.postMessage({
-				command: 'finalizeStreamingMessage',
-				messageId: streamingMessageId
-			});
+				// Process the request with streaming
+				await this._agentInstance.processRequestStream(request, (token: string) => {
+					accumulatedContent += token;
+					this._view?.webview.postMessage({
+						command: 'updateStreamingMessage',
+						messageId: streamingMessageId,
+						content: accumulatedContent
+					});
+				});
+				
+				// Remove thinking indicator and finalize message
+				this._view.webview.postMessage({
+					command: 'removeThinking'
+				});
+				
+				// Finalize streaming message
+				this._view.webview.postMessage({
+					command: 'finalizeStreamingMessage',
+					messageId: streamingMessageId
+				});
+			}
 
 		} catch (error) {
 			console.error('Failed to process chat message:', error);
@@ -203,6 +250,29 @@ export class WebviewManager implements vscode.WebviewViewProvider {
 					isThinking: false
 				}
 			});
+		}
+	}
+
+	private async handleClearChat() {
+		if (!this._view) {
+			return;
+		}
+
+		try {
+			// Send clear chat command to webview to confirm the action
+			this._view.webview.postMessage({
+				command: 'chatCleared'
+			});
+			
+			// Optional: Also reset any agent state if needed
+			// This could include clearing context, conversation history, etc.
+			if (this._agentInstance && this._agentInstance.clearSession) {
+				await this._agentInstance.clearSession();
+			}
+			
+			console.log('Chat session cleared successfully');
+		} catch (error) {
+			console.error('Failed to clear chat:', error);
 		}
 	}
 

@@ -305,6 +305,38 @@ Start by typing a message below!`,
     }
   }, [handleSendMessage]);
 
+  const handleClearChat = useCallback(() => {
+    // Clear all messages and reset to welcome message
+    const welcomeMessage: Message = {
+      id: Date.now().toString(),
+      role: 'assistant',
+      content: `👋 Welcome to Avior AI Agent!
+
+I can help you with:
+• 🔍 Search your codebase
+• ✏️ Edit and refactor code  
+• 📝 Create new files
+• 🔧 Analyze code quality
+• 🐛 Debug issues
+
+Start by typing a message below!`,
+      timestamp: new Date()
+    };
+
+    setMessages([welcomeMessage]);
+    setIsThinking(false);
+    setStreamingMessages(new Map());
+    
+    // Notify extension about chat clear
+    try {
+      vscode.current?.postMessage({
+        command: 'clearChat'
+      });
+    } catch (error) {
+      console.warn('Failed to notify extension about chat clear:', error);
+    }
+  }, []);
+
   if (!isWebviewReady) {
     return (
       <div className="app loading">
@@ -323,6 +355,7 @@ Start by typing a message below!`,
       <ChatHeader 
         onConfigClick={() => setIsConfigOpen(!isConfigOpen)}
         isConfigOpen={isConfigOpen}
+        onClearChat={handleClearChat}
       />
       
       {isConfigOpen && (

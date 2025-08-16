@@ -61,6 +61,11 @@ export function activate(context: vscode.ExtensionContext) {
 		await askAgent(uiService, context);
 	});
 
+	// Register LangChain command
+	const initLangChainCommand = vscode.commands.registerCommand('avior.initLangChain', async () => {
+		await initializeLangChain(uiService);
+	});
+
 	// Auto-start the agent when extension activates (non-blocking)
 	startAgent(configManager, fileService, uiService, context).catch(error => {
 		console.error('Failed to start agent during activation:', error);
@@ -71,7 +76,8 @@ export function activate(context: vscode.ExtensionContext) {
 		configureCommand,
 		selectProviderCommand,
 		viewConfigCommand,
-		askAgentCommand
+		askAgentCommand,
+		initLangChainCommand
 	);
 }
 
@@ -297,6 +303,27 @@ async function handlePluginSelection(pluginItems: any[], uiService: any, context
 	
 	await uiService.showMessage(message, success ? 'info' : 'error');
 	logToChannel(outputChannel, `Plugin ${selectedPluginId} ${action}`);
+}
+
+// Initialize LangChain agent
+async function initializeLangChain(uiService: any) {
+	try {
+		if (!agentInstance) {
+			await uiService.showMessage('Agent not started. Please start the agent first.', 'error');
+			return;
+		}
+
+		await uiService.showMessage('Initializing LangChain agent...', 'info');
+		const result = await agentInstance.useLangChain();
+		
+		if (result.success) {
+			await uiService.showMessage('LangChain agent is now active! Your agent will use structured tools for better reliability.', 'info');
+		} else {
+			await uiService.showMessage(`Failed to initialize LangChain: ${result.error}`, 'error');
+		}
+	} catch (error) {
+		await uiService.showMessage(`Error initializing LangChain: ${error}`, 'error');
+	}
 }
 
 export function deactivate() {

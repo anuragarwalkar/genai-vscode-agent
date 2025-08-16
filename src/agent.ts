@@ -10,6 +10,7 @@ import {
   UIService,
   Result 
 } from './types';
+import { LangChainAgentService } from './langchainAgent';
 
 // Agent state - kept immutable
 let agentState: AgentState = {
@@ -26,6 +27,9 @@ let agentState: AgentState = {
   }
 };
 
+// LangChain agent instance
+let langchainAgent: LangChainAgentService | null = null;
+
 // Factory function to create agent
 export const createAgent = (
   llmService: LLMService,
@@ -40,7 +44,10 @@ export const createAgent = (
     processAgentRequestStream(request, llmService, fileService, uiService, onToken),
   getState: () => agentState,
   updateConfig: (config: Partial<AgentConfig>) => updateAgentConfig(config),
-  isActive: () => agentState.isActive
+  isActive: () => agentState.isActive,
+  // New LangChain methods
+  useLangChain: () => initializeLangChainAgent(fileService, uiService),
+  processWithLangChain: (prompt: string) => processWithLangChain(prompt)
 });
 
 // Start the agent
@@ -155,6 +162,9 @@ const processAgentRequest = async (
   fileService: FileService,
   uiService: UIService
 ): Promise<AgentResponse> => {
+  console.log('🤖 Agent received request:', request.prompt);
+  console.log('📊 Request ID:', request.id);
+  
   // Update current task
   agentState = {
     ...agentState,
@@ -162,11 +172,41 @@ const processAgentRequest = async (
   };
 
   try {
+    // Check if LangChain agent is available and initialized
+    if (langchainAgent && langchainAgent.isInitialized()) {
+      console.log('🔗 Using LangChain agent for processing...');
+      
+      const result = await langchainAgent.processRequest(request.prompt);
+      
+      // Clear current task
+      agentState = {
+        ...agentState,
+        currentTask: null
+      };
+
+      return {
+        requestId: request.id,
+        action: {
+          type: 'respond',
+          content: result
+        },
+        reasoning: 'Processed with LangChain agent',
+        timestamp: new Date()
+      };
+    }
+
+    // Fallback to original processing logic
+    console.log('🔄 Using traditional agent processing...');
+    
     // Determine the type of request and route accordingly
+    console.log('🔍 Determining action for request...');
     const action = await determineAction(request, llmService);
+    console.log('🎯 Determined action:', action.type, '- Reasoning:', action.reasoning);
     
     // Execute the action
+    console.log('⚡ Executing action:', action.type);
     const result = await executeAction(action, request, llmService, fileService, uiService);
+    console.log('✅ Action completed:', result.type);
     
     // Clear current task
     agentState = {
@@ -174,14 +214,19 @@ const processAgentRequest = async (
       currentTask: null
     };
 
-    return {
+    const response = {
       requestId: request.id,
       action: result,
       reasoning: `Processed request: ${request.prompt}`,
       timestamp: new Date()
     };
     
+    console.log('📤 Sending response for action:', result.type);
+    return response;
+    
   } catch (error) {
+    console.error('❌ Agent error:', error);
+    
     // Clear current task on error
     agentState = {
       ...agentState,
@@ -207,6 +252,9 @@ const determineAction = async (
   request: AgentRequest,
   llmService: LLMService
 ): Promise<AgentAction> => {
+  // TODO: Option to use LangChain agent with tools for more reliable action determination
+  // For now, keeping the existing implementation
+  
   const analysisPrompt = `
 Analyze this user request and determine the best action to take:
 
@@ -227,15 +275,24 @@ Be specific and actionable.
 `;
 
   try {
+    console.log('🤖 Sending prompt to LLM for action determination...');
+    console.log('📝 Prompt:', analysisPrompt);
+    
     const response = await llmService.generateResponse(analysisPrompt, request.context);
+    console.log('📤 LLM Raw Response:', response);
+    
     const parsed = JSON.parse(response);
+    console.log('🔍 Parsed LLM Response:', parsed);
     
     return {
       type: parsed.type || 'respond',
       content: parsed.content,
       reasoning: parsed.reasoning || 'Determined action based on request analysis'
     };
-  } catch {
+  } catch (error) {
+    console.log('❌ LLM parsing failed, falling back to keyword analysis. Error:', error);
+    console.log('🔄 Raw LLM response that failed to parse:', error);
+    
     // Fallback to simple keyword analysis
     return analyzeRequestKeywords(request.prompt);
   }
@@ -245,19 +302,44 @@ Be specific and actionable.
 const analyzeRequestKeywords = (prompt: string): AgentAction => {
   const lowerPrompt = prompt.toLowerCase();
   
-  if (lowerPrompt.includes('search') || lowerPrompt.includes('find')) {
-    return { type: 'search', reasoning: 'Request contains search keywords' };
+  // Check for creation keywords first (higher priority)
+  // More comprehensive creation detection
+  const creationKeywords = [
+    'create', 'new', 'add', 'generate', 'make', 'build', 'write', 'implement',
+    'component', 'function', 'class', 'file', 'script', 'module', 'service'
+  ];
+  
+  const hasCreationKeyword = creationKeywords.some(keyword => lowerPrompt.includes(keyword));
+  
+  // Also check for specific patterns that indicate file creation
+  const creationPatterns = [
+    /create\s+(?:a\s+)?(?:new\s+)?(?:file|component|function|class|script)/,
+    /new\s+(?:file|component|function|class|script)/,
+    /(?:make|build|write|implement)\s+(?:a\s+)?(?:file|component|function|class|script)/,
+    /(?:component|function|class|script|module)\s+(?:for|to|that)/,
+    /(?:\.js|\.ts|\.tsx|\.jsx|\.py|\.css|\.html|\.json)\s*$/
+  ];
+  
+  const hasCreationPattern = creationPatterns.some(pattern => pattern.test(lowerPrompt));
+  
+  if (hasCreationKeyword || hasCreationPattern) {
+    return { type: 'create', reasoning: 'Request indicates file/component creation' };
   }
   
-  if (lowerPrompt.includes('edit') || lowerPrompt.includes('modify') || lowerPrompt.includes('change')) {
+  // Then check for edit keywords  
+  if (lowerPrompt.includes('edit') || lowerPrompt.includes('modify') || lowerPrompt.includes('change') || 
+      lowerPrompt.includes('update') || lowerPrompt.includes('fix') || lowerPrompt.includes('refactor')) {
     return { type: 'edit', reasoning: 'Request contains edit keywords' };
   }
   
-  if (lowerPrompt.includes('create') || lowerPrompt.includes('new') || lowerPrompt.includes('add')) {
-    return { type: 'create', reasoning: 'Request contains creation keywords' };
+  // Check for search keywords (but not if it's part of a creation request)
+  if ((lowerPrompt.includes('search') || lowerPrompt.includes('find') || lowerPrompt.includes('look for')) && 
+      !hasCreationKeyword && !hasCreationPattern) {
+    return { type: 'search', reasoning: 'Request contains search keywords' };
   }
   
-  if (lowerPrompt.includes('analyze') || lowerPrompt.includes('review') || lowerPrompt.includes('explain')) {
+  if (lowerPrompt.includes('analyze') || lowerPrompt.includes('review') || lowerPrompt.includes('explain') ||
+      lowerPrompt.includes('check') || lowerPrompt.includes('examine')) {
     return { type: 'analyze', reasoning: 'Request contains analysis keywords' };
   }
   
@@ -330,18 +412,29 @@ const executeEditAction = async (
   fileService: FileService,
   uiService: UIService
 ): Promise<AgentAction> => {
-  // Ask user to select file to edit
-  const files = await fileService.getWorkspaceFiles();
-  const fileItems = files.slice(0, 20).map(file => ({
-    label: file.split('/').pop() || file,
-    description: file,
-    value: file
-  }));
+  // Get current active file or let user select
+  const activeEditor = vscode.window.activeTextEditor;
+  let selectedFile: { label: string; value: string; } | undefined;
 
-  const selectedFile = await uiService.showQuickPick(fileItems, {
-    title: 'Select file to edit',
-    placeHolder: 'Choose the file you want to modify'
-  });
+  if (activeEditor) {
+    selectedFile = {
+      label: activeEditor.document.fileName.split('/').pop() || 'current file',
+      value: activeEditor.document.fileName
+    };
+  } else {
+    // Show file picker for user to select file to edit
+    const files = await fileService.getWorkspaceFiles();
+    const fileItems = files.slice(0, 20).map(file => ({
+      label: file.split('/').pop() || file,
+      description: file,
+      value: file
+    }));
+
+    selectedFile = await uiService.showQuickPick(fileItems, {
+      title: 'Select file to edit',
+      placeHolder: 'Choose the file you want to edit'
+    });
+  }
 
   if (!selectedFile) {
     return {
@@ -351,17 +444,173 @@ const executeEditAction = async (
     };
   }
 
-  // Read the file and get AI suggestions
+  // Read current file content
   const fileContent = await fileService.readFile(selectedFile.value);
-  const editSuggestion = await llmService.suggestEdits(fileContent, request.prompt);
+  
+  // Create enhanced prompt for code editing
+  const editPrompt = `You are editing the file: ${selectedFile.label}
 
-  // Apply the edit if it contains content
-  if (editSuggestion.content) {
-    await fileService.openFile(selectedFile.value);
-    await uiService.showMessage('File opened for review. Please apply suggested changes manually.', 'info');
+Current file content:
+\`\`\`
+${fileContent}
+\`\`\`
+
+User request: ${request.prompt}
+
+IMPORTANT INSTRUCTIONS:
+- Provide ONLY the complete modified code without any markdown formatting
+- Do NOT wrap the code in backtick blocks
+- Do NOT include explanatory text before or after the code
+- Make the changes requested while preserving the existing code structure
+- Return the FULL file content with the requested modifications
+- Ensure the code is syntactically correct and ready to use`;
+
+  const editSuggestion = await llmService.generateResponse(editPrompt, request.context);
+  
+  // Clean the content to remove markdown
+  const cleanedContent = cleanCodeContent(editSuggestion);
+
+  // Apply the edit by writing the new content to the file
+  if (cleanedContent && cleanedContent.trim().length > 0) {
+    try {
+      await fileService.writeFile(selectedFile.value, cleanedContent);
+      await fileService.openFile(selectedFile.value);
+      await uiService.showMessage(`File updated: ${selectedFile.label}`, 'info');
+      
+      return {
+        type: 'edit',
+        target: selectedFile.value,
+        content: `✅ **File Updated Successfully!**
+
+📁 **File:** \`${selectedFile.label}\`
+📍 **Location:** \`${selectedFile.value}\`
+
+Your requested changes have been applied and the file has been saved. The updated file is now open in the editor.
+
+**Changes Applied:** ${request.prompt}`,
+        reasoning: `Successfully updated ${selectedFile.label} with requested changes`
+      };
+    } catch (error) {
+      await uiService.showMessage(`Failed to update file: ${error}`, 'error');
+      return {
+        type: 'respond',
+        content: `❌ **File Update Failed**
+
+**Error:** ${error}
+
+Please check your file permissions and try again.`,
+        reasoning: 'File update failed'
+      };
+    }
+  } else {
+    return {
+      type: 'respond',
+      content: 'No valid code changes generated',
+      reasoning: 'Generated content was empty or invalid'
+    };
   }
+};
 
-  return editSuggestion;
+// Helper function to clean code content from LLM responses
+const cleanCodeContent = (content: string, fileExtension?: string): string => {
+  let cleaned = content;
+  
+  // Remove markdown code blocks
+  const codeBlockRegex = /```[\w]*\n?([\s\S]*?)\n?```/g;
+  const matches = cleaned.match(codeBlockRegex);
+  
+  if (matches && matches.length > 0) {
+    // Extract the largest code block (likely the main content)
+    let largestBlock = '';
+    matches.forEach(match => {
+      const blockContent = match.replace(/```[\w]*\n?/, '').replace(/\n?```$/, '');
+      if (blockContent.length > largestBlock.length) {
+        largestBlock = blockContent;
+      }
+    });
+    cleaned = largestBlock;
+  }
+  
+  // Remove leading/trailing whitespace but preserve internal formatting
+  cleaned = cleaned.trim();
+  
+  // Remove any remaining markdown formatting that might interfere with code
+  cleaned = cleaned.replace(/^\*\*.*?\*\*$/gm, ''); // Bold headers
+  cleaned = cleaned.replace(/^#{1,6}\s+.*$/gm, ''); // Headers
+  cleaned = cleaned.replace(/^\-\s+.*$/gm, ''); // List items if they appear at start of lines
+  
+  return cleaned;
+};
+
+// Helper function to determine file extension and path from user request and content
+const determineFileDetails = (prompt: string, content: string): { fileName: string; extension: string } => {
+  const lowerPrompt = prompt.toLowerCase();
+  
+  // Extract potential file name from prompt
+  let fileName = 'newFile';
+  let extension = 'txt';
+  
+  // First, check for filename in content comments (highest priority)
+  const contentFileNameMatch = content.match(/(?:\/\/|\/\*|#|\<!--)\s*([a-zA-Z][a-zA-Z0-9._-]*\.[a-zA-Z0-9]+)/);
+  if (contentFileNameMatch) {
+    const fullName = contentFileNameMatch[1];
+    const parts = fullName.split('.');
+    if (parts.length > 1) {
+      extension = parts.pop() || 'txt';
+      fileName = parts.join('.');
+    } else {
+      fileName = fullName;
+    }
+    return { fileName, extension };
+  }
+  
+  // Look for file name hints in prompt
+  const fileNameMatch = prompt.match(/(?:create|new|add|generate)\s+(?:a\s+)?(?:file\s+)?(?:called\s+)?["`']?([a-zA-Z][a-zA-Z0-9._-]*\.[a-zA-Z0-9]+)["`']?/i);
+  if (fileNameMatch) {
+    const fullName = fileNameMatch[1];
+    const parts = fullName.split('.');
+    if (parts.length > 1) {
+      extension = parts.pop() || 'txt';
+      fileName = parts.join('.');
+    } else {
+      fileName = fullName;
+    }
+  } else {
+    // Determine extension from content and prompt context
+    if (lowerPrompt.includes('javascript') || lowerPrompt.includes('js') || content.includes('function') || content.includes('const ') || content.includes('let ')) {
+      extension = 'js';
+      fileName = 'component';
+    } else if (lowerPrompt.includes('typescript') || lowerPrompt.includes('ts') || content.includes('interface ') || content.includes(': string') || content.includes(': number')) {
+      extension = 'ts';
+      fileName = 'component';
+    } else if (lowerPrompt.includes('react') || content.includes('JSX') || content.includes('React') || content.includes('useState') || content.includes('useEffect')) {
+      extension = 'tsx';
+      fileName = 'Component';
+    } else if (lowerPrompt.includes('css') || content.includes('background') || content.includes('margin') || content.includes('padding')) {
+      extension = 'css';
+      fileName = 'styles';
+    } else if (lowerPrompt.includes('html') || content.includes('<html') || content.includes('<!DOCTYPE')) {
+      extension = 'html';
+      fileName = 'index';
+    } else if (lowerPrompt.includes('json') || (content.includes('{') && content.includes('"'))) {
+      extension = 'json';
+      fileName = 'data';
+    } else if (lowerPrompt.includes('python') || lowerPrompt.includes('py') || content.includes('def ') || content.includes('import ')) {
+      extension = 'py';
+      fileName = 'script';
+    } else if (lowerPrompt.includes('component') || lowerPrompt.includes('react')) {
+      extension = 'tsx';
+      fileName = 'Component';
+    }
+    
+    // Look for component/class names in content to use as filename
+    const componentMatch = content.match(/(?:class|function|const)\s+([A-Z][a-zA-Z0-9]*)/);
+    if (componentMatch) {
+      fileName = componentMatch[1];
+    }
+  }
+  
+  return { fileName, extension };
 };
 
 // Execute create action
@@ -371,54 +620,80 @@ const executeCreateAction = async (
   fileService: FileService,
   uiService: UIService
 ): Promise<AgentAction> => {
-  // Get file path from user
-  const filePath = await uiService.showInputBox({
-    title: 'Create new file',
-    prompt: 'Enter the path for the new file (relative to workspace)',
-    validateInput: (value) => {
-      if (!value || value.trim().length === 0) {
-        return 'File path is required';
-      }
-      return undefined;
-    }
-  });
-
-  if (!filePath) {
-    return {
-      type: 'respond',
-      content: 'No file path provided',
-      reasoning: 'User cancelled file creation'
-    };
-  }
-
-  // Generate file content using AI
-  const prompt = `Create file content for: ${filePath}\nUser request: ${request.prompt}`;
-  const content = await llmService.generateResponse(prompt, request.context);
-
+  console.log('� Starting file creation process...');
+  console.log('📝 Request prompt:', request.prompt);
+  
   try {
+    // Generate file content using AI with specific instructions for clean code
+    const prompt = `Create clean, production-ready code based on this request: ${request.prompt}
+
+IMPORTANT INSTRUCTIONS:
+- Provide ONLY the raw code content without any markdown formatting
+- Do NOT wrap the code in backtick blocks
+- Do NOT include explanatory text before or after the code
+- Make the code complete and ready to use
+- Include proper imports/exports if needed
+- Follow best practices for the language/framework`;
+    
+    console.log('🤖 Generating AI content with prompt:', prompt);
+    
+    const rawContent = await llmService.generateResponse(prompt, request.context);
+    console.log('✅ AI content generated, length:', rawContent.length);
+    
+    // Clean the content to remove markdown and extract pure code
+    const cleanedContent = cleanCodeContent(rawContent);
+    console.log('🧹 Content cleaned, final length:', cleanedContent.length);
+    
+    // Determine file name and extension
+    const { fileName, extension } = determineFileDetails(request.prompt, cleanedContent);
+    const finalFileName = `${fileName}.${extension}`;
+    
+    console.log('📂 Determined file name:', finalFileName);
+
     // Create the file
     const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
     if (!workspaceFolder) {
       throw new Error('No workspace folder found');
     }
 
-    const fullPath = `${workspaceFolder.uri.fsPath}/${filePath}`;
-    await fileService.writeFile(fullPath, content);
+    const fullPath = `${workspaceFolder.uri.fsPath}/${finalFileName}`;
+    console.log('💾 Writing file to:', fullPath);
+    
+    await fileService.writeFile(fullPath, cleanedContent);
+    console.log('✅ File written successfully');
+    
     await fileService.openFile(fullPath);
+    console.log('📖 File opened in editor');
 
-    await uiService.showMessage(`Created file: ${filePath}`, 'info');
+    await uiService.showMessage(`Created file: ${finalFileName}`, 'info');
+    console.log('🎉 File creation completed successfully');
 
     return {
       type: 'create',
       target: fullPath,
-      content: content,
-      reasoning: 'Successfully created new file'
+      content: `✅ **File Created Successfully!**
+
+📁 **File:** \`${finalFileName}\`
+📍 **Location:** \`${fullPath}\`
+
+The file has been created and opened in the editor. You can now start working with it!
+
+**File Content Preview:**
+\`\`\`${extension}
+${cleanedContent.length > 500 ? cleanedContent.substring(0, 500) + '...\n\n[Content truncated - full file is available in the editor]' : cleanedContent}
+\`\`\``,
+      reasoning: `Successfully created new file: ${finalFileName}`
     };
   } catch (error) {
+    console.error('❌ Error creating file:', error);
     await uiService.showMessage(`Failed to create file: ${error}`, 'error');
     return {
       type: 'respond',
-      content: `Error creating file: ${error}`,
+      content: `❌ **File Creation Failed**
+
+**Error:** ${error}
+
+Please check your request and try again. Make sure you have proper write permissions in the workspace.`,
       reasoning: 'File creation failed'
     };
   }
@@ -504,6 +779,48 @@ const updateAgentConfig = (config: Partial<AgentConfig>): void => {
       ...config
     }
   };
+  
+  // Update LangChain agent config if it exists
+  if (langchainAgent) {
+    langchainAgent.updateConfig(agentState.config);
+  }
+};
+
+// Initialize LangChain agent
+const initializeLangChainAgent = async (
+  fileService: FileService,
+  uiService: UIService
+): Promise<Result<void>> => {
+  try {
+    console.log('🚀 Initializing LangChain agent...');
+    
+    langchainAgent = new LangChainAgentService(agentState.config, fileService, uiService);
+    await langchainAgent.initialize();
+    
+    await uiService.showMessage('LangChain agent initialized successfully!', 'info');
+    return { success: true, data: undefined };
+  } catch (error) {
+    console.error('❌ Failed to initialize LangChain agent:', error);
+    await uiService.showMessage(`Failed to initialize LangChain agent: ${error}`, 'error');
+    return { success: false, error: error as Error };
+  }
+};
+
+// Process request with LangChain agent
+const processWithLangChain = async (prompt: string): Promise<string> => {
+  if (!langchainAgent || !langchainAgent.isInitialized()) {
+    throw new Error('LangChain agent not initialized. Call useLangChain() first.');
+  }
+  
+  try {
+    console.log('🤖 Processing with LangChain agent:', prompt);
+    const result = await langchainAgent.processRequest(prompt);
+    console.log('✅ LangChain processing completed');
+    return result;
+  } catch (error) {
+    console.error('❌ LangChain processing failed:', error);
+    throw error;
+  }
 };
 
 // Utility functions

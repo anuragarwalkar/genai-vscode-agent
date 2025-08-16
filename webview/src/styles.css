@@ -49,7 +49,14 @@
   font-size: 16px;
 }
 
-.config-btn {
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.config-btn,
+.clear-btn {
   background: none;
   border: 1px solid var(--vscode-button-border, transparent);
   color: var(--vscode-button-foreground, #ffffff);
@@ -60,12 +67,18 @@
   font-size: 14px;
 }
 
-.config-btn:hover {
+.config-btn:hover,
+.clear-btn:hover {
   background: var(--vscode-button-hoverBackground, #1177bb);
 }
 
 .config-btn.active {
   background: var(--vscode-button-background, #0e639c);
+}
+
+.clear-btn:hover {
+  background: var(--vscode-errorForeground, #f14c4c);
+  color: white;
 }
 
 /* Configuration Panel */
